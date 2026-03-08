@@ -250,7 +250,8 @@ function AppInner({ session, onLogout }) {
         setResults(prev => [...prev.filter(x => x.symbol !== r.symbol), r]);
         await sendAlerts(r, notifSettings);
 
-        if (r.signal === "BUY" && r.score >= notifSettings.minScore) {
+        const meetsConvictionForAlert = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
+        if (r.signal === "BUY" && r.score >= notifSettings.minScore && meetsConvictionForAlert) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
         }
 

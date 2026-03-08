@@ -397,8 +397,9 @@ async function runScan() {
       const indicator = r.signal === "BUY" ? "🟢" : r.signal === "SELL" ? "🔴" : "🟡";
       console.log(`${indicator} ${r.signal.padEnd(5)} score=${r.score} conviction=${r.conviction}`);
 
-      // Send alert for qualifying BUY signals
-      if (r.signal === "BUY" && r.score >= (config.minScore || 75)) {
+      // Send alert only when score AND conviction thresholds are both met
+      const meetsConviction = (config.minConviction || "HIGH") === "ANY" || r.conviction === "HIGH";
+      if (r.signal === "BUY" && r.score >= (config.minScore || 75) && meetsConviction) {
         await alertSignal(r);
       }
 
