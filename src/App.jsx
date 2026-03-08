@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   alpacaMode: "paper",
   walletSize: 10000,
   autoTradeEnabled: false,
+  bracketOrdersEnabled: true,
 };
 
 const SCAN_INTERVALS = [5, 10, 15, 30, 60, 120];
@@ -173,8 +174,11 @@ function AppInner({ session, onLogout }) {
           const notional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
           if (r.signal === "BUY" && r.score >= notifSettings.minScore && notional >= 1) {
             try {
-              await placeOrder(r.symbol, "buy", notional, notifSettings);
-              addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)`, "insight");
+              await placeOrder(r.symbol, "buy", notional, notifSettings, { stopPrice: r.stop, takeProfitPrice: r.target });
+              const bracketNote = notifSettings.bracketOrdersEnabled && r.stop && r.target
+                ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
+                : "";
+              addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)${bracketNote}`, "insight");
             } catch (e) {
               addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
             }

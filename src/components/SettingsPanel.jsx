@@ -173,6 +173,15 @@ export function SettingsPanel({ settings, onChange, onClose }) {
         {toggle(settings.autoTradeEnabled, "autoTradeEnabled")}
       </div>
 
+      {/* Bracket orders toggle */}
+      <div style={rowStyle}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>Stop Loss & Take Profit</div>
+          <div style={{ fontSize: 11, color: COLORS.muted }}>Attach AI-calculated SL/TP to every order</div>
+        </div>
+        {toggle(settings.bracketOrdersEnabled, "bracketOrdersEnabled")}
+      </div>
+
       {/* Thresholds */}
       <div style={{ padding:"14px 0" }}>
         <div style={{ fontSize:12, fontWeight:700, color:COLORS.muted, textTransform:"uppercase", letterSpacing:1, marginBottom:12 }}>Alert Thresholds</div>

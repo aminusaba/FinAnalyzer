@@ -137,33 +137,56 @@ export function PortfolioPanel({ settings }) {
             {positions.map(p => {
               const pl = parseFloat(p.unrealized_pl);
               const plPct = parseFloat(p.unrealized_plpc) * 100;
+              // Find bracket legs from open orders for this symbol
+              const bracketOrder = orders.find(o =>
+                o.symbol === p.symbol && o.order_class === "bracket" &&
+                ["accepted", "pending_new", "new", "partially_filled"].includes(o.status)
+              );
+              const tp = bracketOrder?.legs?.find(l => l.type === "limit")?.limit_price;
+              const sl = bracketOrder?.legs?.find(l => l.type === "stop")?.stop_price
+                      || bracketOrder?.legs?.find(l => l.type === "stop_limit")?.stop_price;
               return (
                 <div key={p.symbol} style={{
                   background: "linear-gradient(135deg, #111120, #0d0d1a)",
                   border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 14px",
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
                 }}>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 13, color: COLORS.text }}>{p.symbol}</div>
-                    <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
-                      {parseFloat(p.qty).toFixed(4)} shares · avg ${parseFloat(p.avg_entry_price).toFixed(2)}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: COLORS.text }}>{p.symbol}</div>
+                      <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
+                        {parseFloat(p.qty).toFixed(4)} shares · avg ${parseFloat(p.avg_entry_price).toFixed(2)}
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>${parseFloat(p.market_value).toFixed(2)}</div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: pl >= 0 ? COLORS.green : COLORS.red }}>
-                      {pl >= 0 ? "+" : ""}${pl.toFixed(2)} ({plPct >= 0 ? "+" : ""}{plPct.toFixed(2)}%)
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>${parseFloat(p.market_value).toFixed(2)}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: pl >= 0 ? COLORS.green : COLORS.red }}>
+                        {pl >= 0 ? "+" : ""}${pl.toFixed(2)} ({plPct >= 0 ? "+" : ""}{plPct.toFixed(2)}%)
+                      </div>
                     </div>
+                    <button
+                      onClick={() => handleClose(p.symbol)}
+                      disabled={closing === p.symbol}
+                      style={{
+                        marginLeft: 12, padding: "5px 10px", borderRadius: 8,
+                        border: "1px solid rgba(255,77,109,0.3)", background: "rgba(255,77,109,0.08)",
+                        color: COLORS.red, fontSize: 10, cursor: "pointer", fontWeight: 700, fontFamily: "inherit",
+                      }}
+                    >{closing === p.symbol ? "..." : "Close"}</button>
                   </div>
-                  <button
-                    onClick={() => handleClose(p.symbol)}
-                    disabled={closing === p.symbol}
-                    style={{
-                      marginLeft: 12, padding: "5px 10px", borderRadius: 8,
-                      border: "1px solid rgba(255,77,109,0.3)", background: "rgba(255,77,109,0.08)",
-                      color: COLORS.red, fontSize: 10, cursor: "pointer", fontWeight: 700, fontFamily: "inherit",
-                    }}
-                  >{closing === p.symbol ? "..." : "Close"}</button>
+                  {(sl || tp) && (
+                    <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                      {sl && (
+                        <div style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, background: "rgba(255,77,109,0.08)", border: "1px solid rgba(255,77,109,0.2)", color: COLORS.red, fontWeight: 600 }}>
+                          🛑 SL ${parseFloat(sl).toFixed(2)}
+                        </div>
+                      )}
+                      {tp && (
+                        <div style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, background: "rgba(0,212,170,0.08)", border: "1px solid rgba(0,212,170,0.2)", color: COLORS.green, fontWeight: 600 }}>
+                          🎯 TP ${parseFloat(tp).toFixed(2)}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
