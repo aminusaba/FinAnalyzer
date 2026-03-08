@@ -5,7 +5,30 @@ import * as Alpaca from "./alpaca.js";
 
 function mcpReady() { return MCP.isReady(); }
 
+// Parse buying_power from MCP account text (e.g. "Buying Power: $12,345.67" or "buying_power: 12345.67")
+function parseBuyingPower(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(/buying[\s_-]?power[:\s$]*([\d,]+\.?\d*)/i);
+  if (match) return parseFloat(match[1].replace(/,/g, ""));
+  return null;
+}
+
 export async function getAccount(settings) {
+  // Try MCP first — richer context, same source of truth as trading
+  if (mcpReady()) {
+    try {
+      const result = await MCP.callTool("get_account_info", {});
+      const rawText = typeof result === "string" ? result : JSON.stringify(result);
+      const bp = parseBuyingPower(rawText);
+      // Return object compatible with REST response shape
+      if (bp !== null) {
+        const equityMatch = rawText.match(/(?:portfolio[\s_]?value|equity)[:\s$]*([\d,]+\.?\d*)/i);
+        const equity = equityMatch ? parseFloat(equityMatch[1].replace(/,/g, "")) : null;
+        return { buying_power: bp, equity: equity ?? bp, _source: "mcp", _raw: rawText };
+      }
+    } catch {}
+  }
+  // Fall back to direct REST
   return Alpaca.getAccount(settings);
 }
 

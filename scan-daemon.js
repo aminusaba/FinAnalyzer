@@ -343,8 +343,10 @@ async function runScan() {
         alpacaGet("/v2/account"),
         alpacaGet("/v2/positions"),
       ]);
-      buyingPower = parseFloat(account.buying_power || account.cash || 0);
-      console.log(`  Buying power: $${buyingPower.toFixed(0)}`);
+      const rawBp = parseFloat(account.buying_power || account.cash || 0);
+      const capPct = (config.tradingCapitalPct ?? 100) / 100;
+      buyingPower = rawBp * capPct;
+      console.log(`  Buying power: $${rawBp.toFixed(0)} total · using $${buyingPower.toFixed(0)} (${config.tradingCapitalPct ?? 100}%)`);
       if (Array.isArray(positions)) {
         for (const p of positions) {
           currentPositions.set(p.symbol, {

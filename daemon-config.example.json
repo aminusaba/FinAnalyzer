@@ -9,5 +9,6 @@
   "minScore":          75,
   "minConviction":     "HIGH",
   "autoTradeEnabled":  false,
-  "bracketOrdersEnabled": true
+  "bracketOrdersEnabled": true,
+  "tradingCapitalPct": 50
 }

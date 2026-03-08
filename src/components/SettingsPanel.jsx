@@ -167,6 +167,25 @@ export function SettingsPanel({ settings, onChange, onClose }) {
           <input type="number" style={inputStyle} value={settings.walletSize || ""} onChange={e => set("walletSize", parseFloat(e.target.value) || 0)} placeholder="e.g. 10000" min={0} />
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>Trading Capital</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.accent }}>{settings.tradingCapitalPct ?? 100}% of buying power</div>
+          </div>
+          <input type="range" min={5} max={100} step={5}
+            value={settings.tradingCapitalPct ?? 100}
+            onChange={e => set("tradingCapitalPct", parseInt(e.target.value))}
+            style={{ width: "100%", accentColor: COLORS.accent }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
+            <span>5% (conservative)</span>
+            <span>100% (all in)</span>
+          </div>
+          <div style={{ fontSize: 10, color: "#3a3a5a", marginTop: 4 }}>
+            Caps auto-trade spend. Buying power is fetched live from Alpaca MCP.
+          </div>
+        </div>
+
         <button onClick={async () => {
           setAlpacaTestMsg("Connecting...");
           try {

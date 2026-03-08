@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = {
   walletSize: 10000,
   autoTradeEnabled: false,
   bracketOrdersEnabled: true,
+  tradingCapitalPct: 100,  // % of buying power to allocate for auto-trading (1–100)
   mcpUrl: "http://localhost:8000",
   mcpEnabled: true,
 };
@@ -187,7 +188,13 @@ function AppInner({ session, onLogout }) {
           getAccount(notifSettings),
           getPositions(notifSettings),
         ]);
-        buyingPower = parseFloat(account.buying_power || account.cash || 0);
+        const rawBuyingPower = parseFloat(account.buying_power || account.cash || 0);
+        const capPct = (notifSettings.tradingCapitalPct ?? 100) / 100;
+        buyingPower = rawBuyingPower * capPct;
+        const source = account._source === "mcp" ? " (via MCP)" : " (via REST)";
+        if (rawBuyingPower > 0 && capPct < 1) {
+          console.log(`Buying power: $${rawBuyingPower.toFixed(0)} total · using $${buyingPower.toFixed(0)} (${notifSettings.tradingCapitalPct}%)${source}`);
+        }
         if (Array.isArray(positions)) {
           for (const p of positions) {
             currentPositions.set(p.symbol, {
