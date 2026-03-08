@@ -60,7 +60,13 @@ function AppInner({ session, onLogout }) {
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterSignal, setFilterSignal] = useState("All");
   const [showSettings, setShowSettings] = useState(false);
-  const [notifSettings, setNotifSettings] = useState(DEFAULT_SETTINGS);
+  const [notifSettings, setNotifSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem(getUserSettingsKey(session.key));
+      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_SETTINGS;
+  });
   const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history" | "portfolio"
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -74,12 +80,6 @@ function AppInner({ session, onLogout }) {
   const countdownTimer = useRef(null);
 
   const settingsKey = getUserSettingsKey(session.key);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(settingsKey);
-    if (saved) setNotifSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
-    else setNotifSettings(DEFAULT_SETTINGS);
-  }, [settingsKey]);
 
   useEffect(() => {
     localStorage.setItem(settingsKey, JSON.stringify(notifSettings));

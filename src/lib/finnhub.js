@@ -1,4 +1,5 @@
 import { UNIVERSE, CRYPTO_SYMBOLS, FOREX_PAIRS, TOP_N } from "./universe.js";
+import { isReady as mcpReady, callTool as mcpCall } from "./mcp-client.js";
 
 const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_KEY;
 
@@ -12,6 +13,22 @@ const fetchQuote = async (symbol) => {
 };
 
 const fetchCryptoQuote = async ({ symbol, display }) => {
+  // Use MCP when available — more reliable than Finnhub free tier for crypto
+  if (mcpReady()) {
+    try {
+      const bars = await mcpCall("get_crypto_bars", { symbol: display, timeframe: "1Day", limit: 2 });
+      const list = Array.isArray(bars) ? bars : (bars?.bars?.[display] || bars?.bars || null);
+      if (Array.isArray(list) && list.length >= 2) {
+        const price = list[list.length - 1].c ?? list[list.length - 1].close;
+        const prev  = list[list.length - 2].c ?? list[list.length - 2].close;
+        if (price && prev) {
+          const change_pct = ((price - prev) / prev) * 100;
+          return { symbol: display, price, change_pct, assetClass: "Crypto", market: "Crypto" };
+        }
+      }
+    } catch {}
+  }
+  // Fallback: Finnhub
   try {
     const to = Math.floor(Date.now() / 1000);
     const from = to - 86400 * 2;
