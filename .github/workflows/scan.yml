@@ -8,6 +8,9 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write          # allow committing scan history
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,3 +26,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MIN_SCORE: "75"
         run: node scripts/scan.js
+
+      - name: Commit scan history
+        run: |
+          git config user.name "FinAnalyzer Bot"
+          git config user.email "bot@finanalyzer"
+          git add data/scan-history.json
+          git diff --cached --quiet || git commit -m "chore: update scan history [skip ci]"
+          git push

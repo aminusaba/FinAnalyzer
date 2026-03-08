@@ -119,6 +119,21 @@ async function sendTelegram(result) {
   });
 }
 
+// ── History ──────────────────────────────────────────────────────────────────
+
+import { readFileSync, writeFileSync } from "fs";
+
+const HISTORY_FILE = "data/scan-history.json";
+const MAX_HISTORY = 50; // keep last 50 scans
+
+function loadHistory() {
+  try { return JSON.parse(readFileSync(HISTORY_FILE, "utf8")); } catch { return []; }
+}
+
+function saveHistory(history) {
+  writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -132,12 +147,14 @@ async function main() {
   const symbols = await getTopMovers();
   console.log(`Fetched ${symbols.length} top movers`);
 
+  const results = [];
   const alerts = [];
 
   for (const sym of symbols) {
     try {
       console.log(`Analyzing ${sym.symbol}...`);
       const result = await analyzeSymbol(sym);
+      results.push(result);
       const qualifies = result.signal === "BUY" && result.score >= MIN_SCORE && result.conviction === "HIGH";
       if (qualifies) {
         console.log(`  → ALERT: ${result.symbol} score=${result.score} conviction=${result.conviction}`);
@@ -149,9 +166,17 @@ async function main() {
     } catch (e) {
       console.error(`  → Error analyzing ${sym.symbol}: ${e.message}`);
     }
-    // Small delay to respect rate limits
     await new Promise(r => setTimeout(r, 500));
   }
+
+  // Save scan to history
+  const history = loadHistory();
+  history.unshift({
+    timestamp: new Date().toISOString(),
+    results,
+    alerts,
+  });
+  saveHistory(history.slice(0, MAX_HISTORY));
 
   console.log(`Scan complete. Alerts sent: ${alerts.length > 0 ? alerts.join(", ") : "none"}`);
 }

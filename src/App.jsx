@@ -8,6 +8,7 @@ import { Sparkline } from "./components/Sparkline.jsx";
 import { ScoreBadge, SignalBadge, ConvictionBadge, HorizonTag, AssetClassTag } from "./components/Badges.jsx";
 import { DeepDivePanel } from "./components/DeepDivePanel.jsx";
 import { SettingsPanel } from "./components/SettingsPanel.jsx";
+import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -37,6 +38,11 @@ export default function App() {
   const [filterSignal, setFilterSignal] = useState("All");
   const [showSettings, setShowSettings] = useState(false);
   const [notifSettings, setNotifSettings] = useState(DEFAULT_SETTINGS);
+  const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history"
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const { fetchHistory } = useHistory();
   const [nextScanIn, setNextScanIn] = useState(null); // seconds until next auto-scan
   const abortRef = useRef(false);
   const toastId = useRef(0);
@@ -51,6 +57,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("finanalyzer_notif", JSON.stringify(notifSettings));
   }, [notifSettings]);
+
+  // Fetch history when tab is opened
+  useEffect(() => {
+    if (activeTab !== "history") return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    fetchHistory()
+      .then(data => setHistory(Array.isArray(data) ? data : []))
+      .catch(e => setHistoryError(e.message))
+      .finally(() => setHistoryLoading(false));
+  }, [activeTab]);
 
   // Auto-scan scheduler
   useEffect(() => {
@@ -210,10 +227,24 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 390px", height:"calc(100vh - 53px)" }}>
+      {/* Tab bar */}
+      <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: "0 24px", display: "flex", gap: 4 }}>
+        {[["scan", "📡 Live Scan"], ["history", "🕓 History"]].map(([tab, label]) => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            padding: "10px 18px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
+            color: activeTab === tab ? COLORS.accent : COLORS.muted,
+            borderBottom: `2px solid ${activeTab === tab ? COLORS.accent : "transparent"}`,
+          }}>{label}</button>
+        ))}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 390px", height:"calc(100vh - 90px)" }}>
 
         {/* Left panel */}
         <div style={{ overflowY:"auto", padding:20 }}>
+        {activeTab === "history" ? (
+          <HistoryPanel history={history} loading={historyLoading} error={historyError} />
+        ) : (<>
 
           {/* Top picks */}
           {topPicks.length > 0 && (
@@ -300,6 +331,9 @@ export default function App() {
               ))}
             </div>
           )}
+        </div>
+
+        </>)}
         </div>
 
         {/* Deep dive panel */}
