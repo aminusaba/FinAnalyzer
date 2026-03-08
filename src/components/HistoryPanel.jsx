@@ -26,8 +26,9 @@ export function saveHistory(results, settings) {
         .filter(r => r.signal === "BUY" && r.score >= (settings?.minScore ?? 75))
         .map(r => r.symbol),
     };
-    existing.unshift(entry);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(existing.slice(0, MAX_ENTRIES)));
+    // Deduplicate by timestamp before saving
+    const deduped = [entry, ...existing.filter(e => e.timestamp !== entry.timestamp)];
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(deduped.slice(0, MAX_ENTRIES)));
   } catch {}
 }
 
@@ -109,7 +110,7 @@ export function HistoryPanel({ history, loading, error }) {
         {history.length} scan{history.length > 1 ? "s" : ""} recorded · last {new Date(history[0]?.timestamp).toLocaleString()}
       </div>
       {history.map((entry, i) => (
-        <ScanEntry key={entry.timestamp} entry={entry} expanded={expanded === i} onToggle={() => setExpanded(expanded === i ? null : i)} />
+        <ScanEntry key={`${entry.timestamp}-${i}`} entry={entry} expanded={expanded === i} onToggle={() => setExpanded(expanded === i ? null : i)} />
       ))}
     </div>
   );
