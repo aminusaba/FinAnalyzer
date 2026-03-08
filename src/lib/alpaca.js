@@ -54,9 +54,17 @@ export async function closePosition(symbol, settings) {
   return alpacaFetch(`/v2/positions/${encodeURIComponent(symbol)}`, "DELETE", null, settings);
 }
 
-// Batch snapshot — returns price + prev daily bar for change% calculation
+// Batch snapshot — uses Alpaca data API (separate base URL from trading API)
 export async function getSnapshots(symbols, settings) {
-  return alpacaFetch(`/v2/stocks/snapshots?symbols=${symbols.join(",")}`, "GET", null, settings);
+  const res = await fetch(`https://data.alpaca.markets/v2/stocks/snapshots?symbols=${symbols.join(",")}`, {
+    headers: {
+      "APCA-API-KEY-ID": settings.alpacaKey,
+      "APCA-API-SECRET-KEY": settings.alpacaSecret,
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `Alpaca data error ${res.status}`);
+  return data;
 }
 
 // Only Equity and ETF are supported on Alpaca paper trading
