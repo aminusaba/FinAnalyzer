@@ -16,20 +16,6 @@ async function finnhubQuote(symbol) {
   return null;
 }
 
-async function finnhubCrypto({ symbol, display }) {
-  try {
-    const to = Math.floor(Date.now() / 1000);
-    const from = to - 86400 * 2;
-    const r = await fetch(`https://finnhub.io/api/v1/crypto/candle?symbol=${symbol}&resolution=D&from=${from}&to=${to}&token=${FINNHUB_KEY}`);
-    const d = await r.json();
-    if (d?.s === "ok" && d.c?.length >= 2) {
-      const price = d.c[d.c.length - 1];
-      const prev  = d.c[d.c.length - 2];
-      return { price, change_pct: ((price - prev) / prev) * 100 };
-    }
-  } catch {}
-  return null;
-}
 
 async function finnhubForex() {
   try {
@@ -82,24 +68,20 @@ async function fetchAlpacaEquities(settings) {
 }
 
 async function fetchCrypto() {
+  if (!mcpReady()) return []; // Crypto requires MCP (Finnhub crypto API is premium-only)
   return (await Promise.all(
-    CRYPTO_SYMBOLS.map(async ({ symbol, display }) => {
-      // MCP first
-      if (mcpReady()) {
-        try {
-          const bars = await mcpCall("get_crypto_bars", { symbol: display, timeframe: "1Day", limit: 2 });
-          const list = Array.isArray(bars) ? bars : (bars?.bars?.[display] || null);
-          if (Array.isArray(list) && list.length >= 2) {
-            const price = list[list.length - 1].c ?? list[list.length - 1].close;
-            const prev  = list[list.length - 2].c ?? list[list.length - 2].close;
-            if (price && prev)
-              return { symbol: display, price, change_pct: ((price - prev) / prev) * 100, assetClass: "Crypto", market: "Crypto" };
-          }
-        } catch {}
-      }
-      // Finnhub fallback
-      const q = await finnhubCrypto({ symbol, display });
-      return q ? { symbol: display, ...q, assetClass: "Crypto", market: "Crypto" } : null;
+    CRYPTO_SYMBOLS.map(async ({ display }) => {
+      try {
+        const bars = await mcpCall("get_crypto_bars", { symbol: display, timeframe: "1Day", limit: 2 });
+        const list = Array.isArray(bars) ? bars : (bars?.bars?.[display] || null);
+        if (Array.isArray(list) && list.length >= 2) {
+          const price = list[list.length - 1].c ?? list[list.length - 1].close;
+          const prev  = list[list.length - 2].c ?? list[list.length - 2].close;
+          if (price && prev)
+            return { symbol: display, price, change_pct: ((price - prev) / prev) * 100, assetClass: "Crypto", market: "Crypto" };
+        }
+      } catch {}
+      return null;
     })
   )).filter(Boolean);
 }
