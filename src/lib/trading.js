@@ -41,38 +41,42 @@ export async function getOrders(settings) {
 }
 
 export async function placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice, price } = {}) {
-  const qty = price ? parseFloat((notional / price).toFixed(6)) : null;
+  const fractionalQty = price ? parseFloat((notional / price).toFixed(6)) : null;
+
+  // Alpaca rule: fractional shares only allowed on SIMPLE orders.
+  // For bracket orders, round down to whole shares. If < 1 whole share, drop bracket.
+  const wantBracket = settings.bracketOrdersEnabled && stopPrice && takeProfitPrice;
+  const wholeQty    = fractionalQty ? Math.floor(fractionalQty) : null;
+  const canBracket  = wantBracket && wholeQty >= 1;
+  const qty         = canBracket ? wholeQty : fractionalQty; // whole for bracket, fractional for simple
 
   if (mcpReady() && Alpaca.isAlpacaSupported(settings._assetClass)) {
-    if (!qty) {
-      // No price available — fall through to REST with notional (no bracket)
-      return Alpaca.placeOrder(symbol, side, notional, settings, { price });
-    }
-    const useBracket = settings.bracketOrdersEnabled && stopPrice && takeProfitPrice;
+    if (!qty) return Alpaca.placeOrder(symbol, side, notional, settings, { price });
+
     const result = await MCP.callTool("place_stock_order", {
       symbol,
       side,
       quantity: qty,
       type: "market",
       time_in_force: "day",
-      ...(useBracket && {
-        order_class: "bracket",
+      ...(canBracket && {
+        order_class:       "bracket",
         take_profit_price: parseFloat(takeProfitPrice.toFixed(4)),
         stop_loss_price:   parseFloat(stopPrice.toFixed(4)),
       }),
     });
-    // MCP returns "JSON string with order details, or error message" — detect failures
-    if (typeof result === "string" && result.length < 200 && !result.includes('"id"')) {
-      throw new Error(`MCP order rejected: ${result}`);
+    // MCP returns order JSON or a plain-text error string — detect failures
+    if (typeof result === "string" && !result.includes('"id"')) {
+      throw new Error(result);
     }
     if (result?.code || result?.message?.toLowerCase().includes("error")) {
-      throw new Error(result.message || result.code || "MCP order failed");
+      throw new Error(result.message || String(result.code));
     }
     return result;
   }
 
-  // REST fallback — pass price so alpaca.js can use qty for bracket orders
-  return Alpaca.placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice, price });
+  // REST fallback — pass resolved qty so alpaca.js skips re-computing
+  return Alpaca.placeOrder(symbol, side, notional, settings, { stopPrice: canBracket ? stopPrice : null, takeProfitPrice: canBracket ? takeProfitPrice : null, price, qty });
 }
 
 export async function closePosition(symbol, settings) {
