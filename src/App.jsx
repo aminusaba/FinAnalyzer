@@ -659,7 +659,25 @@ function AppInner({ session, onLogout }) {
 
         {/* Deep dive panel */}
         <div style={{ background:"linear-gradient(180deg, #0d0d16, #0a0a12)", borderLeft:`1px solid ${COLORS.border}`, overflowY:"auto", padding:20 }}>
-          <DeepDivePanel selected={selected} deepDive={deepDive} deepLoading={deepLoading} />
+          <DeepDivePanel
+            selected={selected}
+            deepDive={deepDive}
+            deepLoading={deepLoading}
+            settings={notifSettings}
+            onBuy={async (sym, notional, useBracket) => {
+              const opts = useBracket && sym.stop && sym.target && !sym._bracketInvalid
+                ? { stopPrice: sym.stop, takeProfitPrice: sym.target, price: sym.price }
+                : { price: sym.price };
+              await placeOrder(sym.symbol, "buy", notional, { ...notifSettings, _assetClass: sym.assetClass }, opts);
+              await sendOrderFill(notifSettings, { symbol: sym.symbol, side: "buy", notional, stop: sym.stop, target: sym.target, bracket: !!opts.stopPrice });
+              addToast(`🛒 Bought ${sym.symbol} · $${notional.toFixed(0)}`, "insight");
+            }}
+            onSell={async (sym) => {
+              await closePosition(sym.symbol, notifSettings);
+              await sendOrderFill(notifSettings, { symbol: sym.symbol, side: "sell", notional: 0 });
+              addToast(`📤 Closed position in ${sym.symbol}`, "insight");
+            }}
+          />
         </div>
       </div>
 
