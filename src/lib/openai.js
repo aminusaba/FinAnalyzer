@@ -1,5 +1,5 @@
 const OPENAI_KEY = import.meta.env.VITE_OPENAI_KEY;
-const MODEL = "gpt-5";
+const MODEL = "gpt-4o";
 
 const callGPT = async (prompt, maxTokens) => {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
