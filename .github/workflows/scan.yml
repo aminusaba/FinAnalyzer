@@ -1,0 +1,25 @@
+name: Market Scan
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch:           # allow manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run market scan
+        env:
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MIN_SCORE: "75"
+        run: node scripts/scan.js
