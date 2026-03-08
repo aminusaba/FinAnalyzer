@@ -41,12 +41,15 @@ export async function getOrders(settings) {
 }
 
 export async function placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice, price } = {}) {
-  if (mcpReady() && Alpaca.isAlpacaSupported(settings._assetClass)) {
-    const qty = price ? parseFloat((notional / price).toFixed(6)) : undefined;
-    if (!qty) return Alpaca.placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice });
+  const qty = price ? parseFloat((notional / price).toFixed(6)) : null;
 
+  if (mcpReady() && Alpaca.isAlpacaSupported(settings._assetClass)) {
+    if (!qty) {
+      // No price available — fall through to REST with notional (no bracket)
+      return Alpaca.placeOrder(symbol, side, notional, settings, { price });
+    }
     const useBracket = settings.bracketOrdersEnabled && stopPrice && takeProfitPrice;
-    return MCP.callTool("place_stock_order", {
+    const result = await MCP.callTool("place_stock_order", {
       symbol,
       side,
       quantity: qty,
@@ -55,11 +58,21 @@ export async function placeOrder(symbol, side, notional, settings, { stopPrice, 
       ...(useBracket && {
         order_class: "bracket",
         take_profit_price: parseFloat(takeProfitPrice.toFixed(4)),
-        stop_loss_price: parseFloat(stopPrice.toFixed(4)),
+        stop_loss_price:   parseFloat(stopPrice.toFixed(4)),
       }),
     });
+    // MCP returns "JSON string with order details, or error message" — detect failures
+    if (typeof result === "string" && result.length < 200 && !result.includes('"id"')) {
+      throw new Error(`MCP order rejected: ${result}`);
+    }
+    if (result?.code || result?.message?.toLowerCase().includes("error")) {
+      throw new Error(result.message || result.code || "MCP order failed");
+    }
+    return result;
   }
-  return Alpaca.placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice });
+
+  // REST fallback — pass price so alpaca.js can use qty for bracket orders
+  return Alpaca.placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice, price });
 }
 
 export async function closePosition(symbol, settings) {

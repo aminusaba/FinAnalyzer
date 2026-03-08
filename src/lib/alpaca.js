@@ -29,18 +29,20 @@ export async function getOrders(settings) {
   return alpacaFetch("/v2/orders?status=all&limit=50", "GET", null, settings);
 }
 
-// notional = dollar amount (supports fractional shares)
-// stopPrice / takeProfitPrice are optional — if provided, places a bracket order
-export async function placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice } = {}) {
+// notional = dollar amount, price = current price (required for bracket orders)
+// Alpaca REQUIRES qty (not notional) for bracket orders — convert when price is available
+export async function placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice, price } = {}) {
   const useBracket = settings.bracketOrdersEnabled && stopPrice && takeProfitPrice;
+  const qty = price ? parseFloat((notional / price).toFixed(6)) : null;
 
+  // Bracket orders must use qty; prefer qty over notional when price is known
   const body = {
     symbol,
-    notional: notional.toFixed(2),
+    ...(qty ? { qty: String(qty) } : { notional: notional.toFixed(2) }),
     side,
     type: "market",
     time_in_force: "day",
-    ...(useBracket && {
+    ...(useBracket && qty && {
       order_class: "bracket",
       take_profit: { limit_price: takeProfitPrice.toFixed(4) },
       stop_loss:   { stop_price: stopPrice.toFixed(4) },
