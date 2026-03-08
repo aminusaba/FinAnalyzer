@@ -81,9 +81,10 @@ function AppInner({ session, onLogout }) {
 
   const settingsKey = getUserSettingsKey(session.key);
 
-  useEffect(() => {
-    localStorage.setItem(settingsKey, JSON.stringify(notifSettings));
-  }, [notifSettings, settingsKey]);
+  const updateSettings = (newSettings) => {
+    setNotifSettings(newSettings);
+    try { localStorage.setItem(settingsKey, JSON.stringify(newSettings)); } catch {}
+  };
 
   // MCP auto-connect
   useEffect(() => {
@@ -264,7 +265,7 @@ function AppInner({ session, onLogout }) {
       `}</style>
 
       <Toast toasts={toasts} remove={removeToast} />
-      {showSettings && <SettingsPanel settings={notifSettings} onChange={setNotifSettings} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsPanel settings={notifSettings} onChange={updateSettings} onClose={() => setShowSettings(false)} />}
 
       {/* Header */}
       <div style={{
