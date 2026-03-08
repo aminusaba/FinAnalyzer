@@ -257,11 +257,14 @@ async function maybeAutoTrade(r, currentPositions, remainingBuyingPower, circuit
     if (remainingBuyingPower !== null && notional > remainingBuyingPower) { console.log(`  ⚡ ${r.symbol}: insufficient buying power ($${remainingBuyingPower?.toFixed(0)} < $${notional.toFixed(0)})`); return remainingBuyingPower; }
 
     try {
-      const useBracket = config.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
-      const qty = parseFloat((notional / r.price).toFixed(6));
+      const wantBracket    = config.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
+      const fractionalQty  = parseFloat((notional / r.price).toFixed(6));
+      const wholeQty       = Math.floor(fractionalQty);
+      const canBracket     = wantBracket && wholeQty >= 1; // Alpaca: fractional orders must be simple
+      const qty            = canBracket ? wholeQty : fractionalQty;
       const body = {
         symbol: r.symbol, qty, side: "buy", type: "market", time_in_force: "day",
-        ...(useBracket && {
+        ...(canBracket && {
           order_class: "bracket",
           take_profit: { limit_price: r.target.toFixed(4) },
           stop_loss:   { stop_price: r.stop.toFixed(4) },
@@ -270,6 +273,7 @@ async function maybeAutoTrade(r, currentPositions, remainingBuyingPower, circuit
       await alpacaPost("/v2/orders", body);
       circuitBreaker.failures = 0;
       remainingBuyingPower -= notional;
+      if (!canBracket && wantBracket) console.log(`  ℹ Bracket skipped for ${r.symbol} — qty ${fractionalQty.toFixed(4)} is fractional`);
       // Update live position map
       currentPositions.set(r.symbol, {
         qty: (existingPosition?.qty ?? 0) + qty,
