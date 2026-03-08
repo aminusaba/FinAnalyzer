@@ -1,33 +1,15 @@
 const PAPER_URL = "https://paper-api.alpaca.markets";
 const LIVE_URL = "https://api.alpaca.markets";
 
-const isLocalhost =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-
 async function alpacaFetch(path, method = "GET", body = null, settings) {
-  let url, headers;
-
-  if (isLocalhost) {
-    const base = settings.alpacaMode === "live" ? LIVE_URL : PAPER_URL;
-    url = `${base}${path}`;
-    headers = {
+  const base = settings.alpacaMode === "live" ? LIVE_URL : PAPER_URL;
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: {
       "APCA-API-KEY-ID": settings.alpacaKey,
       "APCA-API-SECRET-KEY": settings.alpacaSecret,
       "Content-Type": "application/json",
-    };
-  } else {
-    url = `/api/alpaca?path=${encodeURIComponent(path)}&mode=${settings.alpacaMode || "paper"}`;
-    headers = {
-      "apca-api-key-id": settings.alpacaKey,
-      "apca-api-secret-key": settings.alpacaSecret,
-      "Content-Type": "application/json",
-    };
-  }
-
-  const res = await fetch(url, {
-    method,
-    headers,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));

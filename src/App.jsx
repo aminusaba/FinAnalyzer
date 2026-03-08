@@ -292,21 +292,18 @@ function AppInner({ session, onLogout }) {
 
         {/* Center status */}
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          {/* MCP / API status */}
-          {(() => {
-            const isLocalhost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-            const hasKeys = notifSettings.alpacaKey && notifSettings.alpacaSecret;
-            const apiConnected = !isLocalhost && hasKeys;
-            const status = mcpStatus === "connected" ? "connected" : mcpStatus === "connecting" ? "connecting" : apiConnected ? "api" : "off";
-            const dot = status === "connected" ? COLORS.green : status === "connecting" ? COLORS.gold : status === "api" ? COLORS.green : "#3a3a5a";
-            const label = status === "connected" ? "MCP Connected" : status === "connecting" ? "Connecting..." : status === "api" ? "API Connected" : "MCP Off";
-            return (
-              <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-                <div style={{ width:7, height:7, borderRadius:"50%", background: dot, boxShadow: (status === "connected" || status === "api") ? `0 0 6px ${COLORS.green}` : "none", animation: status === "connecting" ? "pulse 1s infinite" : "none" }} />
-                <span style={{ fontSize:10, color: (status === "connected" || status === "api") ? COLORS.green : COLORS.muted, fontWeight:600 }}>{label}</span>
-              </div>
-            );
-          })()}
+          {/* MCP status */}
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <div style={{
+              width:7, height:7, borderRadius:"50%",
+              background: mcpStatus === "connected" ? COLORS.green : mcpStatus === "connecting" ? COLORS.gold : "#3a3a5a",
+              boxShadow: mcpStatus === "connected" ? `0 0 6px ${COLORS.green}` : "none",
+              animation: mcpStatus === "connecting" ? "pulse 1s infinite" : "none",
+            }} />
+            <span style={{ fontSize:10, color: mcpStatus === "connected" ? COLORS.green : COLORS.muted, fontWeight:600 }}>
+              MCP {mcpStatus === "connected" ? "Connected" : mcpStatus === "connecting" ? "Connecting..." : "Off"}
+            </span>
+          </div>
           {scanning && (
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ width:10, height:10, borderRadius:"50%", background:COLORS.accent, animation:"pulse 1s infinite", boxShadow:`0 0 8px ${COLORS.accent}` }} />
