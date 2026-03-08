@@ -254,7 +254,15 @@ function AppInner({ session, onLogout }) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
         }
 
-        // Auto-trade
+        // Auto-trade — always explain why an order was or wasn't placed for BUY signals
+        if (r.signal === "BUY") {
+          if (!notifSettings.autoTradeEnabled) {
+            addToast(`ℹ ${r.symbol} BUY signal — auto-trade is off (enable in Settings)`, "insight");
+          } else if (!notifSettings.alpacaKey || !notifSettings.alpacaSecret) {
+            addToast(`ℹ ${r.symbol} BUY signal — no Alpaca API keys configured`, "insight");
+          }
+        }
+
         if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret) {
           const supported = isAlpacaSupported(r.assetClass);
           const targetNotional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
@@ -267,19 +275,19 @@ function AppInner({ session, onLogout }) {
 
           if (r.signal === "BUY") {
             if (circuitBreaker.current.tripped) {
-              addToast(`⚡ ${r.symbol} BUY skipped — circuit breaker tripped`, "alert");
+              addToast(`⛔ ${r.symbol} BUY skipped — circuit breaker tripped (3 consecutive failures). Check your Alpaca API.`, "alert");
             } else if (!supported) {
-              addToast(`⚡ ${r.symbol} BUY skipped — ${r.assetClass} not supported on Alpaca`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — ${r.assetClass} assets not supported on Alpaca paper/live trading`, "insight");
             } else if (!meetsScore) {
-              addToast(`⚡ ${r.symbol} BUY skipped — score ${r.score} < min ${notifSettings.minScore}`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — score ${r.score} below minimum ${notifSettings.minScore}`, "insight");
             } else if (!meetsConviction) {
-              addToast(`⚡ ${r.symbol} BUY skipped — conviction ${r.conviction} below threshold`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — conviction is ${r.conviction}, threshold requires HIGH`, "insight");
             } else if (alreadyInvested >= targetNotional * 0.9) {
-              addToast(`⚡ ${r.symbol} BUY skipped — already holding $${alreadyInvested.toFixed(0)} (target $${targetNotional.toFixed(0)})`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — already holding $${alreadyInvested.toFixed(0)} of $${targetNotional.toFixed(0)} target (≥90% full)`, "insight");
             } else if (notional < 1) {
-              addToast(`⚡ ${r.symbol} BUY skipped — wallet size not set or allocation too small`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — wallet size not set or GPT allocation (${r.allocation_pct}%) too small`, "insight");
             } else if (remainingBuyingPower !== null && notional > remainingBuyingPower) {
-              addToast(`⚡ ${r.symbol} BUY skipped — insufficient buying power ($${remainingBuyingPower.toFixed(0)} available, $${notional.toFixed(0)} needed)`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — need $${notional.toFixed(0)} but only $${remainingBuyingPower.toFixed(0)} buying power remaining (${notifSettings.tradingCapitalPct ?? 100}% cap)`, "insight");
             } else {
               try {
                 const useBracket = notifSettings.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
@@ -482,7 +490,7 @@ function AppInner({ session, onLogout }) {
           }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.color = COLORS.accent; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c2e"; e.currentTarget.style.color = COLORS.muted; }}
-          >⚙ Alerts</button>
+          >⚙ Settings</button>
           {!scanning
             ? <button onClick={startScan} style={{
                 padding: "8px 22px", border: "none", borderRadius: 20,
