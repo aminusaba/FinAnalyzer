@@ -188,52 +188,116 @@ export default function App() {
   return (
     <div style={{ minHeight:"100vh", background:COLORS.bg, fontFamily:"'Inter',sans-serif", color:COLORS.text }}>
       <style>{`
-        @keyframes slideIn { from { transform:translateX(40px); opacity:0 } to { transform:translateX(0); opacity:1 } }
-        * { box-sizing:border-box }
-        ::-webkit-scrollbar { width:5px }
-        ::-webkit-scrollbar-track { background:#12121a }
-        ::-webkit-scrollbar-thumb { background:#2a2a40; border-radius:3px }
-        input[type=range] { accent-color: #00d4aa }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        @keyframes slideIn { from { transform:translateX(40px);opacity:0 } to { transform:translateX(0);opacity:1 } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @keyframes glow { 0%,100%{box-shadow:0 0 8px rgba(0,212,170,0.4)} 50%{box-shadow:0 0 20px rgba(0,212,170,0.8)} }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        * { box-sizing:border-box; margin:0; padding:0 }
+        body { background:#06060a }
+        ::-webkit-scrollbar { width:4px }
+        ::-webkit-scrollbar-track { background:transparent }
+        ::-webkit-scrollbar-thumb { background:linear-gradient(180deg,#00d4aa44,#00b4d844); border-radius:4px }
+        ::-webkit-scrollbar-thumb:hover { background:linear-gradient(180deg,#00d4aa88,#00b4d888) }
+        input[type=range] { accent-color:#00d4aa }
+        input,button { font-family:inherit }
+        .row-animate { animation: fadeIn 0.3s ease both }
       `}</style>
 
       <Toast toasts={toasts} remove={removeToast} />
       {showSettings && <SettingsPanel settings={notifSettings} onChange={setNotifSettings} onClose={() => setShowSettings(false)} />}
 
       {/* Header */}
-      <div style={{ background:COLORS.surface, borderBottom:`1px solid ${COLORS.border}`, padding:"13px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100 }}>
-        <div style={{ fontWeight:800, fontSize:17, color:COLORS.accent }}>📡 FinAnalyzer — Global Market Intelligence</div>
-        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+      <div style={{
+        background: "linear-gradient(180deg, #0f0f1e 0%, #0d0d16 100%)",
+        borderBottom: "1px solid #1c1c2e",
+        padding: "0 28px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        position: "sticky", top: 0, zIndex: 100, height: 58,
+        boxShadow: "0 4px 32px rgba(0,0,0,0.6)",
+      }}>
+        {/* Logo */}
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            background: "linear-gradient(135deg, #00d4aa, #00b4d8)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 16, boxShadow: "0 0 16px rgba(0,212,170,0.4)",
+          }}>📡</div>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15, background: "linear-gradient(135deg, #00d4aa, #00b4d8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              FinAnalyzer
+            </div>
+            <div style={{ fontSize: 10, color: COLORS.muted, letterSpacing: 1, textTransform: "uppercase" }}>Global Market Intelligence</div>
+          </div>
+        </div>
+
+        {/* Center status */}
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           {scanning && (
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div style={{ width:140, height:4, background:COLORS.border, borderRadius:2 }}>
-                <div style={{ width:`${progress}%`, height:"100%", background:COLORS.accent, borderRadius:2, transition:"width 0.3s" }} />
+              <div style={{ width:10, height:10, borderRadius:"50%", background:COLORS.accent, animation:"pulse 1s infinite", boxShadow:`0 0 8px ${COLORS.accent}` }} />
+              <div style={{ width:160, height:3, background:COLORS.border, borderRadius:4, overflow:"hidden" }}>
+                <div style={{ width:`${progress}%`, height:"100%", background:"linear-gradient(90deg,#00d4aa,#00b4d8)", borderRadius:4, transition:"width 0.4s ease", boxShadow:"0 0 8px rgba(0,212,170,0.6)" }} />
               </div>
-              <span style={{ color:COLORS.gold, fontSize:12 }}>{progress}% — {progressLabel}</span>
+              <span style={{ color:COLORS.gold, fontSize:11, fontWeight:600 }}>{progress}% · {progressLabel}</span>
             </div>
           )}
-          {!scanning && results.length > 0 && <span style={{ color:COLORS.muted, fontSize:12 }}>{results.length} assets analyzed</span>}
-          {!scanning && nextScanIn !== null && (
-            <span style={{ color:COLORS.gold, fontSize:12 }}>
-              ⏱ Next scan in {Math.floor(nextScanIn / 60)}:{String(nextScanIn % 60).padStart(2, "0")}
-            </span>
+          {!scanning && results.length > 0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ width:6, height:6, borderRadius:"50%", background:COLORS.accent }} />
+              <span style={{ color:COLORS.muted, fontSize:11 }}>{results.length} assets analyzed</span>
+            </div>
           )}
-          <button onClick={() => setShowSettings(s => !s)} style={{ padding:"7px 14px", background:"transparent", border:`1px solid ${COLORS.border}`, borderRadius:20, color:COLORS.muted, fontSize:12, cursor:"pointer" }}>
-            ⚙ Alerts
-          </button>
+          {!scanning && nextScanIn !== null && (
+            <div style={{ background:"rgba(240,180,41,0.08)", border:"1px solid rgba(240,180,41,0.2)", borderRadius:20, padding:"4px 12px" }}>
+              <span style={{ color:COLORS.gold, fontSize:11, fontWeight:600 }}>
+                ⏱ {Math.floor(nextScanIn / 60)}:{String(nextScanIn % 60).padStart(2, "0")}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button onClick={() => setShowSettings(s => !s)} style={{
+            padding: "7px 16px", cursor: "pointer", fontSize: 12, fontWeight: 600,
+            background: "rgba(255,255,255,0.04)", border: "1px solid #1c1c2e",
+            borderRadius: 20, color: COLORS.muted, transition: "all 0.2s",
+          }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.color = COLORS.accent; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c2e"; e.currentTarget.style.color = COLORS.muted; }}
+          >⚙ Alerts</button>
           {!scanning
-            ? <button onClick={startScan} style={{ padding:"8px 20px", background:COLORS.accent, color:"#000", border:"none", borderRadius:20, fontWeight:700, fontSize:13, cursor:"pointer" }}>▶ Scan Markets</button>
-            : <button onClick={stopScan} style={{ padding:"8px 20px", background:COLORS.red, color:"#fff", border:"none", borderRadius:20, fontWeight:700, fontSize:13, cursor:"pointer" }}>■ Stop</button>
+            ? <button onClick={startScan} style={{
+                padding: "8px 22px", border: "none", borderRadius: 20,
+                fontWeight: 700, fontSize: 13, cursor: "pointer",
+                background: "linear-gradient(135deg, #00d4aa, #00b4d8)",
+                color: "#000", boxShadow: "0 4px 16px rgba(0,212,170,0.35)",
+                transition: "all 0.2s",
+              }}
+                onMouseEnter={e => e.currentTarget.style.boxShadow = "0 6px 24px rgba(0,212,170,0.6)"}
+                onMouseLeave={e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,212,170,0.35)"}
+              >▶ Scan Markets</button>
+            : <button onClick={stopScan} style={{
+                padding: "8px 22px", border: "none", borderRadius: 20,
+                fontWeight: 700, fontSize: 13, cursor: "pointer",
+                background: "linear-gradient(135deg, #ff4d6d, #e11d48)",
+                color: "#fff", boxShadow: "0 4px 16px rgba(255,77,109,0.35)",
+              }}>■ Stop</button>
           }
         </div>
       </div>
 
       {/* Tab bar */}
-      <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: "0 24px", display: "flex", gap: 4 }}>
+      <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: "0 28px", display: "flex", gap: 2 }}>
         {[["scan", "📡 Live Scan"], ["history", "🕓 History"]].map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
-            padding: "10px 18px", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
+            padding: "12px 20px", background: "none", border: "none", cursor: "pointer",
+            fontSize: 12, fontWeight: 600, letterSpacing: 0.3,
             color: activeTab === tab ? COLORS.accent : COLORS.muted,
             borderBottom: `2px solid ${activeTab === tab ? COLORS.accent : "transparent"}`,
+            transition: "all 0.2s",
           }}>{label}</button>
         ))}
       </div>
@@ -249,16 +313,28 @@ export default function App() {
           {/* Top picks */}
           {topPicks.length > 0 && (
             <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:12, fontWeight:700, color:COLORS.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>🔥 High Conviction Buys</div>
+              <div style={{ fontSize:10, fontWeight:700, color:COLORS.gold, textTransform:"uppercase", letterSpacing:1.5, marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ display:"inline-block", width:3, height:12, background:"linear-gradient(180deg,#f0b429,#f97316)", borderRadius:2 }}/>
+                High Conviction Buys
+              </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10 }}>
                 {topPicks.map(r => (
-                  <div key={r.symbol} onClick={() => openDeepDive(r)} style={{ background:COLORS.card, border:`1px solid rgba(0,212,170,0.25)`, borderRadius:10, padding:12, cursor:"pointer" }}>
-                    <div style={{ fontWeight:800, fontSize:14, color:COLORS.accent }}>{r.symbol}</div>
-                    <div style={{ fontSize:10, color:COLORS.muted, marginBottom:4 }}>{r.assetClass}</div>
+                  <div key={r.symbol} onClick={() => openDeepDive(r)} style={{
+                    background: "linear-gradient(135deg, #141424, #0f0f1e)",
+                    border: "1px solid rgba(0,212,170,0.2)",
+                    borderRadius: 12, padding: 14, cursor: "pointer",
+                    boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                    transition: "all 0.2s",
+                  }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(0,212,170,0.5)"; e.currentTarget.style.boxShadow = "0 8px 32px rgba(0,212,170,0.15)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,212,170,0.2)"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.4)"; }}
+                  >
+                    <div style={{ fontWeight:900, fontSize:14, color:COLORS.accent, letterSpacing:-0.3 }}>{r.symbol}</div>
+                    <div style={{ fontSize:9, color:COLORS.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:0.5 }}>{r.assetClass}</div>
                     <ScoreBadge score={r.score} />
-                    <Sparkline data={r.prices} />
-                    <div style={{ fontSize:10, color:COLORS.gold, marginTop:4 }}>R/R {r.risk_reward}x · {r.allocation_pct}%</div>
-                    <HorizonTag horizon={r.horizon} />
+                    <div style={{ marginTop:6 }}><Sparkline data={r.prices} /></div>
+                    <div style={{ fontSize:10, color:COLORS.gold, marginTop:6, fontWeight:600 }}>R/R {r.risk_reward}x · {r.allocation_pct}%</div>
+                    <div style={{ marginTop:4 }}><HorizonTag horizon={r.horizon} /></div>
                   </div>
                 ))}
               </div>
@@ -298,37 +374,58 @@ export default function App() {
 
           {/* Results table */}
           {filtered.length === 0 ? (
-            <div style={{ background:COLORS.card, border:`1px solid ${COLORS.border}`, borderRadius:12, padding:60, textAlign:"center", color:COLORS.muted }}>
-              <div style={{ fontSize:40, marginBottom:12 }}>📡</div>
-              <div style={{ fontSize:15, marginBottom:6 }}>{scanning ? `Scanning... ${progressLabel}` : "No results yet."}</div>
-              <div style={{ fontSize:13 }}>{!scanning && "Hit \"Scan Markets\" to analyze top movers across US, Europe, Asia, Crypto, Forex & Commodities."}</div>
+            <div style={{
+              background: "linear-gradient(135deg, #111120, #0d0d1a)",
+              border: `1px solid ${COLORS.border}`, borderRadius: 14,
+              padding: 60, textAlign: "center",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📡</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#404060", marginBottom: 8 }}>{scanning ? progressLabel : "No results yet."}</div>
+              <div style={{ fontSize: 12, color: "#2a2a42" }}>{!scanning && "Click Scan Markets to analyze top movers across US, Europe, Asia, Crypto, Forex & Commodities."}</div>
             </div>
           ) : (
-            <div style={{ background:COLORS.card, border:`1px solid ${COLORS.border}`, borderRadius:12, overflow:"hidden" }}>
-              <div style={{ display:"grid", gridTemplateColumns:"44px 80px 70px 80px 70px 60px 70px 60px 70px 1fr", padding:"9px 14px", borderBottom:`1px solid ${COLORS.border}`, fontSize:10, color:COLORS.muted, textTransform:"uppercase", letterSpacing:1 }}>
-                <div></div><div>Symbol</div><div>Class</div><div>Price</div><div>Signal</div><div>Score</div><div>Conv.</div><div>R/R</div><div>Horizon</div><div>Thesis</div>
+            <div style={{
+              background: "linear-gradient(180deg, #111120, #0d0d1a)",
+              border: `1px solid ${COLORS.border}`, borderRadius: 14,
+              overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            }}>
+              {/* Table header */}
+              <div style={{ display:"grid", gridTemplateColumns:"44px 80px 70px 90px 74px 60px 70px 60px 70px 1fr", padding:"10px 16px", borderBottom:`1px solid ${COLORS.border}`, fontSize:9, color:COLORS.muted, textTransform:"uppercase", letterSpacing:1.2, fontWeight:700, background:"rgba(0,0,0,0.2)" }}>
+                <div/><div>Symbol</div><div>Class</div><div>Price</div><div>Signal</div><div>Score</div><div>Conv.</div><div>R/R</div><div>Horizon</div><div>Thesis</div>
               </div>
-              {filtered.map(r => (
-                <div key={r.symbol + r.market} onClick={() => openDeepDive(r)}
-                  style={{ display:"grid", gridTemplateColumns:"44px 80px 70px 80px 70px 60px 70px 60px 70px 1fr", padding:"11px 14px", borderBottom:`1px solid ${COLORS.border}`, cursor:"pointer", transition:"background 0.15s", background: selected?.symbol === r.symbol ? "rgba(0,212,170,0.05)" : "transparent" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-                  onMouseLeave={e => e.currentTarget.style.background = selected?.symbol === r.symbol ? "rgba(0,212,170,0.05)" : "transparent"}>
-                  <div style={{ display:"flex", alignItems:"center" }}><ScoreBadge score={r.score} /></div>
-                  <div style={{ display:"flex", alignItems:"center", fontWeight:700, fontSize:13 }}>{r.symbol}</div>
-                  <div style={{ display:"flex", alignItems:"center" }}><AssetClassTag assetClass={r.assetClass} /></div>
-                  <div style={{ display:"flex", flexDirection:"column", justifyContent:"center" }}>
-                    <div style={{ fontSize:12, fontWeight:600 }}>{r.price?.toFixed(r.assetClass === "Forex" ? 4 : 2)}</div>
-                    <div style={{ fontSize:10, color: r.change_pct >= 0 ? COLORS.green : COLORS.red }}>{r.change_pct >= 0 ? "+" : ""}{r.change_pct?.toFixed(2)}%</div>
-                    <Sparkline data={r.prices} />
+              {filtered.map((r, idx) => {
+                const isSelected = selected?.symbol === r.symbol;
+                return (
+                  <div key={r.symbol + r.market} className="row-animate" onClick={() => openDeepDive(r)}
+                    style={{
+                      display:"grid", gridTemplateColumns:"44px 80px 70px 90px 74px 60px 70px 60px 70px 1fr",
+                      padding:"12px 16px", borderBottom:`1px solid ${COLORS.border}`,
+                      cursor:"pointer", transition:"background 0.15s",
+                      background: isSelected
+                        ? "linear-gradient(90deg, rgba(0,212,170,0.07), transparent)"
+                        : idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                      animationDelay: `${idx * 0.04}s`,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = isSelected ? "linear-gradient(90deg, rgba(0,212,170,0.1), transparent)" : "rgba(255,255,255,0.04)"}
+                    onMouseLeave={e => e.currentTarget.style.background = isSelected ? "linear-gradient(90deg, rgba(0,212,170,0.07), transparent)" : idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"}>
+                    <div style={{ display:"flex", alignItems:"center" }}><ScoreBadge score={r.score} /></div>
+                    <div style={{ display:"flex", alignItems:"center", fontWeight:800, fontSize:13, color: isSelected ? COLORS.accent : COLORS.text, letterSpacing:-0.2 }}>{r.symbol}</div>
+                    <div style={{ display:"flex", alignItems:"center" }}><AssetClassTag assetClass={r.assetClass} /></div>
+                    <div style={{ display:"flex", flexDirection:"column", justifyContent:"center", gap:2 }}>
+                      <div style={{ fontSize:13, fontWeight:700 }}>{r.assetClass === "Forex" ? r.price?.toFixed(4) : `$${r.price?.toFixed(2)}`}</div>
+                      <div style={{ fontSize:10, fontWeight:600, color: r.change_pct >= 0 ? COLORS.green : COLORS.red }}>{r.change_pct >= 0 ? "▲" : "▼"} {Math.abs(r.change_pct)?.toFixed(2)}%</div>
+                      <Sparkline data={r.prices} />
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center" }}><SignalBadge signal={r.signal} /></div>
+                    <div style={{ display:"flex", alignItems:"center", fontSize:14, fontWeight:800, color: r.score >= 75 ? COLORS.green : r.score >= 50 ? COLORS.gold : COLORS.red }}>{r.score}</div>
+                    <div style={{ display:"flex", alignItems:"center" }}><ConvictionBadge conviction={r.conviction} /></div>
+                    <div style={{ display:"flex", alignItems:"center", fontSize:12, fontWeight:700, color:COLORS.gold }}>{r.risk_reward}x</div>
+                    <div style={{ display:"flex", alignItems:"center" }}><HorizonTag horizon={r.horizon} /></div>
+                    <div style={{ display:"flex", alignItems:"center", fontSize:11, color:"#6060a0", paddingLeft:8, lineHeight:1.5 }}>{r.investor_thesis?.slice(0, 65)}…</div>
                   </div>
-                  <div style={{ display:"flex", alignItems:"center" }}><SignalBadge signal={r.signal} /></div>
-                  <div style={{ display:"flex", alignItems:"center", fontSize:13, fontWeight:700, color: r.score >= 75 ? COLORS.green : r.score >= 50 ? COLORS.gold : COLORS.red }}>{r.score}</div>
-                  <div style={{ display:"flex", alignItems:"center" }}><ConvictionBadge conviction={r.conviction} /></div>
-                  <div style={{ display:"flex", alignItems:"center", fontSize:12, color:COLORS.gold }}>{r.risk_reward}x</div>
-                  <div style={{ display:"flex", alignItems:"center" }}><HorizonTag horizon={r.horizon} /></div>
-                  <div style={{ display:"flex", alignItems:"center", fontSize:11, color:COLORS.muted, paddingLeft:8 }}>{r.investor_thesis?.slice(0, 65)}...</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -336,12 +433,12 @@ export default function App() {
         </div>
 
         {/* Deep dive panel */}
-        <div style={{ background:COLORS.surface, borderLeft:`1px solid ${COLORS.border}`, overflowY:"auto", padding:20 }}>
+        <div style={{ background:"linear-gradient(180deg, #0d0d16, #0a0a12)", borderLeft:`1px solid ${COLORS.border}`, overflowY:"auto", padding:20 }}>
           <DeepDivePanel selected={selected} deepDive={deepDive} deepLoading={deepLoading} />
         </div>
       </div>
 
-      <div style={{ position:"fixed", bottom:10, left:"50%", transform:"translateX(-50%)", color:COLORS.muted, fontSize:10, background:COLORS.surface, padding:"3px 14px", borderRadius:20, border:`1px solid ${COLORS.border}`, zIndex:99 }}>
+      <div style={{ position:"fixed", bottom:14, left:"50%", transform:"translateX(-50%)", color:"#3a3a5a", fontSize:10, background:"rgba(13,13,22,0.9)", padding:"4px 16px", borderRadius:20, border:"1px solid #1c1c2e", zIndex:99, backdropFilter:"blur(8px)", letterSpacing:0.5 }}>
         ⚠ AI-generated analysis only — not financial advice
       </div>
     </div>

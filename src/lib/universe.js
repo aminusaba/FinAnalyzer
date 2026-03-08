@@ -1,7 +1,21 @@
 export const COLORS = {
-  bg:"#0a0a0f", surface:"#12121a", card:"#1a1a28", border:"#2a2a40",
-  accent:"#00d4aa", gold:"#f0b429", red:"#ff4d6d", green:"#00d4aa",
-  text:"#e0e0f0", muted:"#6b6b8a", blue:"#4d9fff", purple:"#a78bfa",
+  bg:      "#06060a",
+  surface: "#0d0d16",
+  card:    "#111120",
+  border:  "#1c1c2e",
+  accent:  "#00d4aa",
+  gold:    "#f0b429",
+  red:     "#ff4d6d",
+  green:   "#00d4aa",
+  text:    "#e8e8f8",
+  muted:   "#5a5a7a",
+  blue:    "#4d9fff",
+  purple:  "#a78bfa",
+  // gradients
+  accentGrad: "linear-gradient(135deg, #00d4aa, #00b4d8)",
+  goldGrad:   "linear-gradient(135deg, #f0b429, #f97316)",
+  redGrad:    "linear-gradient(135deg, #ff4d6d, #e11d48)",
+  purpleGrad: "linear-gradient(135deg, #a78bfa, #7c3aed)",
 };
 
 export const UNIVERSE = {
