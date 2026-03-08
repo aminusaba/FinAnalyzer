@@ -4,3 +4,5 @@ dist
 .env.local
 .vercel
 .claude
+daemon-config.json
+data/

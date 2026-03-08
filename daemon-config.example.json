@@ -1,0 +1,13 @@
+{
+  "alpacaKey":         "YOUR_ALPACA_KEY",
+  "alpacaSecret":      "YOUR_ALPACA_SECRET",
+  "alpacaMode":        "paper",
+  "telegramChatId":    "YOUR_TELEGRAM_CHAT_ID",
+  "walletSize":        10000,
+  "intervalMinutes":   30,
+  "maxSymbols":        30,
+  "minScore":          75,
+  "minConviction":     "HIGH",
+  "autoTradeEnabled":  false,
+  "bracketOrdersEnabled": true
+}
