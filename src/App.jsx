@@ -12,7 +12,7 @@ import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
 import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
-import { placeOrder, closePosition, isAlpacaSupported } from "./lib/trading.js";
+import { placeOrder, closePosition, isAlpacaSupported, getMarketBars } from "./lib/trading.js";
 import { initialize as mcpInit, isReady as mcpReady, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
 
 const DEFAULT_SETTINGS = {
@@ -176,7 +176,8 @@ function AppInner({ session, onLogout }) {
       const sym = symbols[i];
       setProgressLabel(`Analyzing ${sym.symbol}...`);
       try {
-        const r = await analyzeSymbol(sym);
+        const bars = await getMarketBars(sym.symbol, sym.assetClass);
+        const r = await analyzeSymbol({ ...sym, bars });
         setResults(prev => [...prev, r]);
         await sendAlerts(r, notifSettings);
         if (r.signal === "BUY" && r.score >= notifSettings.minScore) {

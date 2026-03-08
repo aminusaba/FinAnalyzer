@@ -6,23 +6,14 @@ import * as Alpaca from "./alpaca.js";
 function mcpReady() { return MCP.isReady(); }
 
 export async function getAccount(settings) {
-  if (mcpReady()) return MCP.callTool("get_account_info");
   return Alpaca.getAccount(settings);
 }
 
 export async function getPositions(settings) {
-  if (mcpReady()) {
-    const result = await MCP.callTool("get_all_positions");
-    return Array.isArray(result) ? result : [];
-  }
   return Alpaca.getPositions(settings);
 }
 
 export async function getOrders(settings) {
-  if (mcpReady()) {
-    const result = await MCP.callTool("get_orders", { status: "all", limit: 50, nested: true });
-    return Array.isArray(result) ? result : [];
-  }
   return Alpaca.getOrders(settings);
 }
 
@@ -51,6 +42,19 @@ export async function placeOrder(symbol, side, notional, settings, { stopPrice, 
 export async function closePosition(symbol, settings) {
   if (mcpReady()) return MCP.callTool("close_position", { symbol });
   return Alpaca.closePosition(symbol, settings);
+}
+
+// Fetch recent daily OHLCV bars for market context (equities + crypto)
+export async function getMarketBars(symbol, assetClass) {
+  if (!mcpReady()) return null;
+  try {
+    if (assetClass === "Crypto") {
+      return await MCP.callTool("get_crypto_bars", { symbol, timeframe: "1Day", limit: 10 });
+    } else if (assetClass === "Equity" || assetClass === "ETF") {
+      return await MCP.callTool("get_stock_bars", { symbol, timeframe: "1Day", limit: 10 });
+    }
+  } catch {}
+  return null;
 }
 
 export { isAlpacaSupported } from "./alpaca.js";

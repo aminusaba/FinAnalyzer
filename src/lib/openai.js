@@ -14,11 +14,12 @@ const callGPT = async (prompt, maxTokens) => {
   return JSON.parse(match[0]);
 };
 
-export const analyzeSymbol = async ({ symbol, assetClass, market, price, change_pct }) => {
+export const analyzeSymbol = async ({ symbol, assetClass, market, price, change_pct, bars }) => {
   const priceCtx = price ? `Live price: ${price}, 1-day change: ${(change_pct || 0).toFixed(2)}%.` : "";
+  const barsCtx = bars ? `\nRecent daily OHLCV bars (use for technical analysis and accurate prices):\n${typeof bars === "string" ? bars : JSON.stringify(bars)}` : "";
   const prompt = `You are a senior portfolio analyst covering global markets.
 Asset: ${symbol} | Class: ${assetClass} | Market: ${market}
-${priceCtx}
+${priceCtx}${barsCtx}
 Today: ${new Date().toISOString().slice(0, 10)}
 
 Return ONLY valid JSON, no markdown:
@@ -43,7 +44,7 @@ Return ONLY valid JSON, no markdown:
   "investor_thesis": "<2-3 sentence long-term investment case>",
   "swing_thesis": "<1-2 sentence short-term trade rationale>",
   "sentiment": "bullish|neutral|bearish",
-  "prices": [<array of 15 estimated recent daily closes as numbers>]
+  "prices": [<array of recent daily closes as numbers, use bar data if provided>]
 }`;
   return callGPT(prompt, 700);
 };
