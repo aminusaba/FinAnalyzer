@@ -206,19 +206,33 @@ function AppInner({ session, onLogout }) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
         }
         // Auto-trade
-        if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret && isAlpacaSupported(r.assetClass)) {
+        if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret) {
+          const supported = isAlpacaSupported(r.assetClass);
           const notional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
-          if (r.signal === "BUY" && r.score >= notifSettings.minScore && notional >= 1) {
-            try {
-              await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
-              const bracketNote = notifSettings.bracketOrdersEnabled && r.stop && r.target
-                ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
-                : "";
-              addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)${bracketNote}`, "insight");
-            } catch (e) {
-              addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
+          const meetsScore = r.score >= notifSettings.minScore;
+          const meetsConviction = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
+
+          if (r.signal === "BUY") {
+            if (!supported) {
+              addToast(`⚡ ${r.symbol} BUY signal — skipped (${r.assetClass} not supported on Alpaca)`, "insight");
+            } else if (!meetsScore) {
+              addToast(`⚡ ${r.symbol} BUY signal — skipped (score ${r.score} < min ${notifSettings.minScore})`, "insight");
+            } else if (!meetsConviction) {
+              addToast(`⚡ ${r.symbol} BUY signal — skipped (conviction ${r.conviction} below threshold)`, "insight");
+            } else if (notional < 1) {
+              addToast(`⚡ ${r.symbol} BUY signal — skipped (wallet size not set or too small)`, "insight");
+            } else {
+              try {
+                await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
+                const bracketNote = notifSettings.bracketOrdersEnabled && r.stop && r.target
+                  ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
+                  : "";
+                addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)${bracketNote}`, "insight");
+              } catch (e) {
+                addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
+              }
             }
-          } else if (r.signal === "SELL") {
+          } else if (r.signal === "SELL" && supported) {
             try {
               await closePosition(r.symbol, notifSettings);
               addToast(`📤 Auto-closed position in ${r.symbol}`, "insight");
