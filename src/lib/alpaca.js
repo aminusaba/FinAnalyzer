@@ -30,14 +30,24 @@ export async function getOrders(settings) {
 }
 
 // notional = dollar amount (supports fractional shares)
-export async function placeOrder(symbol, side, notional, settings) {
-  return alpacaFetch("/v2/orders", "POST", {
+// stopPrice / takeProfitPrice are optional — if provided, places a bracket order
+export async function placeOrder(symbol, side, notional, settings, { stopPrice, takeProfitPrice } = {}) {
+  const useBracket = settings.bracketOrdersEnabled && stopPrice && takeProfitPrice;
+
+  const body = {
     symbol,
     notional: notional.toFixed(2),
     side,
     type: "market",
     time_in_force: "day",
-  }, settings);
+    ...(useBracket && {
+      order_class: "bracket",
+      take_profit: { limit_price: takeProfitPrice.toFixed(4) },
+      stop_loss:   { stop_price: stopPrice.toFixed(4) },
+    }),
+  };
+
+  return alpacaFetch("/v2/orders", "POST", body, settings);
 }
 
 export async function closePosition(symbol, settings) {
