@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback } from "react";
 
-const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY;
+const OPENAI_KEY = import.meta.env.VITE_OPENAI_KEY;
 const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_KEY;
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "gpt-4o";
 
 // Broad watchlist — quotes fetched from Finnhub, top 10 movers selected dynamically
 const WATCHLIST = [
@@ -135,16 +135,16 @@ Return ONLY a valid JSON object, no markdown:
   "summary": "<2 sentence swing trade thesis>"
 }`;
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${OPENAI_KEY}`},
       body: JSON.stringify({
         model: MODEL, max_tokens:600,
         messages:[{role:"user", content: prompt}]
       })
     });
     const data = await res.json();
-    const text = data.content?.map(b=>b.type==="text"?b.text:"").join("") || "";
+    const text = data.choices?.[0]?.message?.content || "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON");
     return JSON.parse(match[0]);
@@ -213,13 +213,13 @@ Return ONLY valid JSON:
   "swing_plan": "<detailed 3-5 sentence plan with entry/target/stop rationale>",
   "confidence": <1-10>
 }`;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${OPENAI_KEY}`},
         body: JSON.stringify({ model:MODEL, max_tokens:800, messages:[{role:"user",content:prompt}] })
       });
       const data = await res.json();
-      const text = data.content?.map(b=>b.type==="text"?b.text:"").join("")||"";
+      const text = data.choices?.[0]?.message?.content || "";
       const match = text.match(/\{[\s\S]*\}/);
       setDeepDive(match ? JSON.parse(match[0]) : {error:"Parse failed"});
     } catch(e) { setDeepDive({error:e.message}); }
