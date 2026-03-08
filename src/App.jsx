@@ -3,17 +3,17 @@ import { COLORS } from "./lib/universe.js";
 import { fetchAllMarketData } from "./lib/market-data.js";
 import { getCached, setCache } from "./lib/analysis-cache.js";
 import { analyzeSymbol, deepDiveSymbol } from "./lib/openai.js";
-import { sendAlerts } from "./lib/notifications.js";
+import { sendAlerts, sendOrderFill } from "./lib/notifications.js";
 import { Toast } from "./components/Toast.jsx";
 import { Sparkline } from "./components/Sparkline.jsx";
 import { ScoreBadge, SignalBadge, ConvictionBadge, HorizonTag, AssetClassTag } from "./components/Badges.jsx";
 import { DeepDivePanel } from "./components/DeepDivePanel.jsx";
 import { SettingsPanel } from "./components/SettingsPanel.jsx";
-import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
+import { HistoryPanel, useHistory, saveHistory } from "./components/HistoryPanel.jsx";
 import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
-import { placeOrder, closePosition, isAlpacaSupported, getMarketBars } from "./lib/trading.js";
+import { placeOrder, closePosition, isAlpacaSupported, getMarketBars, getAccount, getPositions } from "./lib/trading.js";
 import { initialize as mcpInit, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
 
 const DEFAULT_SETTINGS = {
@@ -79,6 +79,8 @@ function AppInner({ session, onLogout }) {
   const toastId = useRef(0);
   const autoScanTimer = useRef(null);
   const countdownTimer = useRef(null);
+  const startScanRef = useRef(null);       // always points to latest startScan (avoids stale closure in timer)
+  const circuitBreaker = useRef({ failures: 0, tripped: false }); // stops auto-trade after 3 consecutive failures
 
   const settingsKey = getUserSettingsKey(session.key);
 
@@ -107,9 +109,9 @@ function AppInner({ session, onLogout }) {
       .finally(() => setHistoryLoading(false));
   }, [activeTab]);
 
-  // Auto-scan scheduler
+  // Auto-scan scheduler — uses ref to always call the latest startScan (fixes stale closure)
   useEffect(() => {
-    clearInterval(autoScanTimer.current);
+    clearTimeout(autoScanTimer.current);
     clearInterval(countdownTimer.current);
     setNextScanIn(null);
 
@@ -127,7 +129,7 @@ function AppInner({ session, onLogout }) {
 
       autoScanTimer.current = setTimeout(() => {
         clearInterval(countdownTimer.current);
-        startScan();
+        startScanRef.current?.(); // always uses latest startScan
         scheduleNext();
       }, intervalMs);
     };
@@ -153,11 +155,12 @@ function AppInner({ session, onLogout }) {
       await Notification.requestPermission();
     }
     abortRef.current = false;
+    circuitBreaker.current = { failures: 0, tripped: false }; // reset circuit breaker each scan
     setScanning(true);
     setProgress(0);
     setResults([]);
 
-    // Step 1: gather data from all sources in parallel (Finnhub + Alpaca + MCP crypto)
+    // Step 1: gather market data in parallel (Finnhub + Alpaca + MCP crypto)
     setProgressLabel("Gathering market data from all sources...");
     let allSymbols = [];
     try {
@@ -174,37 +177,58 @@ function AppInner({ session, onLogout }) {
       return;
     }
 
-    // Step 2: separate cached (show immediately) from uncached (need GPT analysis)
+    // Step 2: fetch account state for buying power check + portfolio context
+    let buyingPower = null;
+    let portfolioContext = null;
+    if (notifSettings.alpacaKey && notifSettings.alpacaSecret) {
+      try {
+        const [account, positions] = await Promise.all([
+          getAccount(notifSettings),
+          getPositions(notifSettings),
+        ]);
+        buyingPower = parseFloat(account.buying_power || account.cash || 0);
+        if (Array.isArray(positions) && positions.length) {
+          portfolioContext = positions
+            .map(p => `${p.symbol}: ${p.qty} shares @ avg $${parseFloat(p.avg_entry_price || 0).toFixed(2)}, mkt value $${parseFloat(p.market_value || 0).toFixed(0)}`)
+            .join("; ");
+        }
+      } catch {
+        // Non-fatal — continue without account data
+      }
+    }
+
+    // Step 3: separate cached from uncached
     const toAnalyze = [];
     const cachedResults = [];
     for (const sym of allSymbols) {
       const hit = getCached(sym.symbol, session.key);
       if (hit) {
-        cachedResults.push({ ...hit, price: sym.price, change_pct: sym.change_pct }); // refresh price
+        cachedResults.push({ ...hit, price: sym.price, change_pct: sym.change_pct });
       } else {
         toAnalyze.push(sym);
       }
     }
 
-    // Show cached results immediately so user sees data while new analysis runs
     if (cachedResults.length) setResults(cachedResults);
-
     setProgressLabel(`Found ${allSymbols.length} symbols — analyzing ${toAnalyze.length} new...`);
 
-    // Step 3: analyze only uncached symbols
+    // Step 4: GPT analysis + auto-trade
+    let remainingBuyingPower = buyingPower; // track spend within this scan
     for (let i = 0; i < toAnalyze.length; i++) {
       if (abortRef.current) break;
       const sym = toAnalyze[i];
       setProgressLabel(`Analyzing ${sym.symbol} (${i + 1}/${toAnalyze.length})...`);
       try {
         const bars = await getMarketBars(sym.symbol, sym.assetClass);
-        const r = await analyzeSymbol({ ...sym, bars });
+        const r = await analyzeSymbol({ ...sym, bars, portfolioContext });
         setCache(sym.symbol, r, session.key);
         setResults(prev => [...prev.filter(x => x.symbol !== r.symbol), r]);
         await sendAlerts(r, notifSettings);
+
         if (r.signal === "BUY" && r.score >= notifSettings.minScore) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
         }
+
         // Auto-trade
         if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret) {
           const supported = isAlpacaSupported(r.assetClass);
@@ -213,7 +237,9 @@ function AppInner({ session, onLogout }) {
           const meetsConviction = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
 
           if (r.signal === "BUY") {
-            if (!supported) {
+            if (circuitBreaker.current.tripped) {
+              addToast(`⚡ ${r.symbol} BUY skipped — circuit breaker tripped (3 consecutive order failures)`, "alert");
+            } else if (!supported) {
               addToast(`⚡ ${r.symbol} BUY signal — skipped (${r.assetClass} not supported on Alpaca)`, "insight");
             } else if (!meetsScore) {
               addToast(`⚡ ${r.symbol} BUY signal — skipped (score ${r.score} < min ${notifSettings.minScore})`, "insight");
@@ -221,14 +247,25 @@ function AppInner({ session, onLogout }) {
               addToast(`⚡ ${r.symbol} BUY signal — skipped (conviction ${r.conviction} below threshold)`, "insight");
             } else if (notional < 1) {
               addToast(`⚡ ${r.symbol} BUY signal — skipped (wallet size not set or too small)`, "insight");
+            } else if (remainingBuyingPower !== null && notional > remainingBuyingPower) {
+              addToast(`⚡ ${r.symbol} BUY skipped — insufficient buying power ($${remainingBuyingPower.toFixed(0)} available, $${notional.toFixed(0)} needed)`, "insight");
             } else {
               try {
+                const useBracket = notifSettings.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
                 await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
-                const bracketNote = notifSettings.bracketOrdersEnabled && r.stop && r.target
+                circuitBreaker.current.failures = 0; // reset on success
+                if (remainingBuyingPower !== null) remainingBuyingPower -= notional;
+                const bracketNote = useBracket
                   ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
-                  : "";
+                  : r._bracketInvalid ? " · (bracket skipped — invalid R/R math)" : "";
                 addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)${bracketNote}`, "insight");
+                await sendOrderFill(notifSettings, { symbol: r.symbol, side: "buy", notional, stop: r.stop, target: r.target, bracket: useBracket });
               } catch (e) {
+                circuitBreaker.current.failures++;
+                if (circuitBreaker.current.failures >= 3) {
+                  circuitBreaker.current.tripped = true;
+                  addToast(`⛔ Circuit breaker tripped — auto-trade paused for rest of scan`, "alert");
+                }
                 addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
               }
             }
@@ -236,6 +273,7 @@ function AppInner({ session, onLogout }) {
             try {
               await closePosition(r.symbol, notifSettings);
               addToast(`📤 Auto-closed position in ${r.symbol}`, "insight");
+              await sendOrderFill(notifSettings, { symbol: r.symbol, side: "sell", notional: 0 });
             } catch {
               // No position to close — silently ignore
             }
@@ -247,9 +285,19 @@ function AppInner({ session, onLogout }) {
       setProgress(Math.round(((i + 1) / toAnalyze.length) * 100));
       await new Promise(r => setTimeout(r, 200));
     }
+
+    // Save scan to local history
+    setResults(prev => {
+      saveHistory(prev, notifSettings);
+      return prev;
+    });
+
     setProgressLabel(`Scan complete — ${allSymbols.length} symbols, ${toAnalyze.length} analyzed, ${cachedResults.length} from cache`);
     setScanning(false);
   };
+
+  // Keep ref always pointing to latest startScan (fixes stale closure in auto-scan timer)
+  startScanRef.current = startScan;
 
   const stopScan = () => { abortRef.current = true; setScanning(false); setProgressLabel("Stopped"); };
 

@@ -1,13 +1,34 @@
+import React from "react";
 import { COLORS } from "../lib/universe.js";
 import { SignalBadge, ConvictionBadge } from "./Badges.jsx";
 
-const HISTORY_URL = "https://raw.githubusercontent.com/aminusaba/FinAnalyzer/master/data/scan-history.json";
+const HISTORY_KEY = "finanalyzer_history";
+const MAX_ENTRIES = 30;
 
 export function useHistory() {
-  return { fetchHistory: async () => {
-    const r = await fetch(`${HISTORY_URL}?t=${Date.now()}`);
-    return r.json();
-  }};
+  return {
+    fetchHistory: async () => {
+      try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+    },
+  };
+}
+
+export function saveHistory(results, settings) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    const entry = {
+      timestamp: new Date().toISOString(),
+      results: results.map(r => ({
+        symbol: r.symbol, assetClass: r.assetClass, signal: r.signal,
+        conviction: r.conviction, score: r.score, investor_thesis: r.investor_thesis,
+      })),
+      alerts: results
+        .filter(r => r.signal === "BUY" && r.score >= (settings?.minScore ?? 75))
+        .map(r => r.symbol),
+    };
+    existing.unshift(entry);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(existing.slice(0, MAX_ENTRIES)));
+  } catch {}
 }
 
 function ScanEntry({ entry, expanded, onToggle }) {
@@ -17,7 +38,6 @@ function ScanEntry({ entry, expanded, onToggle }) {
 
   return (
     <div style={{ background: COLORS.card, border: `1px solid ${hasAlerts ? "rgba(0,212,170,0.3)" : COLORS.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8 }}>
-      {/* Header row */}
       <div onClick={onToggle} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -38,7 +58,6 @@ function ScanEntry({ entry, expanded, onToggle }) {
         </div>
       </div>
 
-      {/* Expanded results */}
       {expanded && entry.results?.length > 0 && (
         <div style={{ borderTop: `1px solid ${COLORS.border}` }}>
           <div style={{ display: "grid", gridTemplateColumns: "80px 70px 80px 70px 60px 1fr", padding: "7px 16px", fontSize: 10, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1, background: "rgba(0,0,0,0.2)" }}>
@@ -80,14 +99,14 @@ export function HistoryPanel({ history, loading, error }) {
     <div style={{ textAlign: "center", padding: 60, color: COLORS.muted }}>
       <div style={{ fontSize: 36, marginBottom: 12 }}>📭</div>
       <div>No scan history yet.</div>
-      <div style={{ fontSize: 12, marginTop: 4 }}>History is saved after each background scan.</div>
+      <div style={{ fontSize: 12, marginTop: 4 }}>History is saved locally after each scan.</div>
     </div>
   );
 
   return (
     <div>
       <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 14 }}>
-        {history.length} scan{history.length > 1 ? "s" : ""} recorded · last updated {new Date(history[0]?.timestamp).toLocaleString()}
+        {history.length} scan{history.length > 1 ? "s" : ""} recorded · last {new Date(history[0]?.timestamp).toLocaleString()}
       </div>
       {history.map((entry, i) => (
         <ScanEntry key={entry.timestamp} entry={entry} expanded={expanded === i} onToggle={() => setExpanded(expanded === i ? null : i)} />
@@ -95,6 +114,3 @@ export function HistoryPanel({ history, loading, error }) {
     </div>
   );
 }
-
-// Need React for useState in this file
-import React from "react";

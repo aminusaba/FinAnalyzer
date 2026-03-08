@@ -18,22 +18,35 @@ async function finnhubQuote(symbol) {
 
 
 
+// Concurrency limiter — avoids Finnhub rate-limit (30 req/s free tier)
+async function withConcurrency(fns, limit = 5) {
+  const results = new Array(fns.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < fns.length) {
+      const i = idx++;
+      try { results[i] = await fns[i](); } catch { results[i] = null; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, fns.length) }, worker));
+  return results;
+}
+
 async function fetchFinnhubEquities() {
   const entries = Object.entries(UNIVERSE);
-  const results = await Promise.all(
-    entries.flatMap(([category, symbols]) =>
-      symbols.map(async symbol => {
-        const q = await finnhubQuote(symbol);
-        if (!q) return null;
-        const assetClass = category === "US ETFs" ? "ETF"
-          : category === "Commodities" ? "Commodity"
-          : category.includes("Europe") ? "Europe"
-          : category.includes("Asia") ? "Asia"
-          : "Equity";
-        return { symbol, ...q, assetClass, market: category };
-      })
-    )
+  const tasks = entries.flatMap(([category, symbols]) =>
+    symbols.map(symbol => async () => {
+      const q = await finnhubQuote(symbol);
+      if (!q) return null;
+      const assetClass = category === "US ETFs" ? "ETF"
+        : category === "Commodities" ? "Commodity"
+        : category.includes("Europe") ? "Europe"
+        : category.includes("Asia") ? "Asia"
+        : "Equity";
+      return { symbol, ...q, assetClass, market: category };
+    })
   );
+  const results = await withConcurrency(tasks, 5);
   return results.filter(Boolean);
 }
 

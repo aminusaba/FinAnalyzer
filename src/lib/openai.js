@@ -14,13 +14,18 @@ const callGPT = async (prompt, maxTokens) => {
   return JSON.parse(match[0]);
 };
 
-export const analyzeSymbol = async ({ symbol, assetClass, market, price, change_pct, bars }) => {
+export const analyzeSymbol = async ({ symbol, assetClass, market, price, change_pct, bars, portfolioContext }) => {
   const priceCtx = price ? `Live price: ${price}, 1-day change: ${(change_pct || 0).toFixed(2)}%.` : "";
   const barsCtx = bars ? `\nRecent daily OHLCV bars (use for technical analysis and accurate prices):\n${typeof bars === "string" ? bars : JSON.stringify(bars)}` : "";
+  const portCtx = portfolioContext ? `\nCurrent portfolio holdings for context (avoid over-concentration):\n${portfolioContext}` : "";
   const prompt = `You are a senior portfolio analyst covering global markets.
 Asset: ${symbol} | Class: ${assetClass} | Market: ${market}
-${priceCtx}${barsCtx}
+${priceCtx}${barsCtx}${portCtx}
 Today: ${new Date().toISOString().slice(0, 10)}
+
+IMPORTANT: For BUY signals, stop MUST be less than entry, and target MUST be greater than entry.
+For SELL signals, stop MUST be greater than entry, and target MUST be less than entry.
+allocation_pct should reflect conviction and existing portfolio exposure (lower if already holding similar assets).
 
 Return ONLY valid JSON, no markdown:
 {
@@ -46,7 +51,19 @@ Return ONLY valid JSON, no markdown:
   "sentiment": "bullish|neutral|bearish",
   "prices": [<array of recent daily closes as numbers, use bar data if provided>]
 }`;
-  return callGPT(prompt, 700);
+  const result = await callGPT(prompt, 750);
+
+  // Validate entry/stop/target math — if invalid, disable bracket orders for this signal
+  if (result.signal === "BUY" && result.entry && result.stop && result.target) {
+    if (result.stop >= result.entry || result.target <= result.entry) {
+      result._bracketInvalid = true;
+    }
+  } else if (result.signal === "SELL" && result.entry && result.stop && result.target) {
+    if (result.stop <= result.entry || result.target >= result.entry) {
+      result._bracketInvalid = true;
+    }
+  }
+  return result;
 };
 
 export const deepDiveSymbol = async (sym) => {
