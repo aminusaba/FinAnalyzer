@@ -1,7 +1,7 @@
 // Fetches market data from ALL sources in parallel (Finnhub + Alpaca + MCP crypto)
 // Merges by symbol — Alpaca data takes priority over Finnhub for equity/ETF
 
-import { UNIVERSE, CRYPTO_SYMBOLS, FOREX_PAIRS, ALPACA_SCAN_SYMBOLS } from "./universe.js";
+import { UNIVERSE, CRYPTO_SYMBOLS, ALPACA_SCAN_SYMBOLS } from "./universe.js";
 import { getSnapshots } from "./alpaca.js";
 import { isReady as mcpReady, callTool as mcpCall } from "./mcp-client.js";
 
@@ -17,19 +17,6 @@ async function finnhubQuote(symbol) {
 }
 
 
-async function finnhubForex() {
-  try {
-    const r = await fetch(`https://finnhub.io/api/v1/forex/rates?base=USD&token=${FINNHUB_KEY}`);
-    const d = await r.json();
-    if (!d?.quote) return [];
-    return FOREX_PAIRS.map(currency => {
-      const rate = d.quote[currency];
-      if (!rate) return null;
-      return { symbol: `${currency}/USD`, price: parseFloat((1 / rate).toFixed(5)), change_pct: 0, assetClass: "Forex", market: "Forex" };
-    }).filter(Boolean);
-  } catch {}
-  return [];
-}
 
 async function fetchFinnhubEquities() {
   const entries = Object.entries(UNIVERSE);
@@ -88,16 +75,15 @@ async function fetchCrypto() {
 
 export async function fetchAllMarketData(settings) {
   // Run all sources in parallel
-  const [finnhubEquities, alpacaEquities, crypto, forex] = await Promise.all([
+  const [finnhubEquities, alpacaEquities, crypto] = await Promise.all([
     fetchFinnhubEquities(),
     fetchAlpacaEquities(settings),
     fetchCrypto(),
-    finnhubForex(),
   ]);
 
   // Merge into map — lower priority first, higher overwrites
   const map = new Map();
-  for (const s of [...finnhubEquities, ...forex, ...crypto]) map.set(s.symbol, s);
+  for (const s of [...finnhubEquities, ...crypto]) map.set(s.symbol, s);
   // Alpaca overwrites Finnhub for equity/ETF (real-time, more accurate)
   for (const s of alpacaEquities) map.set(s.symbol, s);
 
