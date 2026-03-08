@@ -9,6 +9,8 @@ import { ScoreBadge, SignalBadge, ConvictionBadge, HorizonTag, AssetClassTag } f
 import { DeepDivePanel } from "./components/DeepDivePanel.jsx";
 import { SettingsPanel } from "./components/SettingsPanel.jsx";
 import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
+import { LoginScreen } from "./components/LoginScreen.jsx";
+import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -25,6 +27,16 @@ const SCAN_INTERVALS = [5, 10, 15, 30, 60, 120];
 const CATEGORIES = ["All", "Equity", "ETF", "Crypto", "Forex", "Commodity", "Europe", "Asia"];
 
 export default function App() {
+  const [session, setSession] = useState(() => getSession());
+
+  const handleAuth = (s) => setSession(s);
+  const handleLogout = () => { clearSession(); setSession(null); };
+
+  if (!session) return <LoginScreen onAuth={handleAuth} />;
+  return <AppInner session={session} onLogout={handleLogout} />;
+}
+
+function AppInner({ session, onLogout }) {
   const [results, setResults] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -49,14 +61,17 @@ export default function App() {
   const autoScanTimer = useRef(null);
   const countdownTimer = useRef(null);
 
-  useEffect(() => {
-    const saved = localStorage.getItem("finanalyzer_notif");
-    if (saved) setNotifSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
-  }, []);
+  const settingsKey = getUserSettingsKey(session.key);
 
   useEffect(() => {
-    localStorage.setItem("finanalyzer_notif", JSON.stringify(notifSettings));
-  }, [notifSettings]);
+    const saved = localStorage.getItem(settingsKey);
+    if (saved) setNotifSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
+    else setNotifSettings(DEFAULT_SETTINGS);
+  }, [settingsKey]);
+
+  useEffect(() => {
+    localStorage.setItem(settingsKey, JSON.stringify(notifSettings));
+  }, [notifSettings, settingsKey]);
 
   // Fetch history when tab is opened
   useEffect(() => {
@@ -260,6 +275,26 @@ export default function App() {
 
         {/* Actions */}
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {/* User badge */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:4 }}>
+            <div style={{
+              width:28, height:28, borderRadius:"50%",
+              background:"linear-gradient(135deg,#00d4aa,#00b4d8)",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:12, fontWeight:800, color:"#000",
+            }}>
+              {session.username[0].toUpperCase()}
+            </div>
+            <span style={{ fontSize:12, color:COLORS.muted, fontWeight:500 }}>{session.username}</span>
+            <button onClick={onLogout} style={{
+              padding:"4px 10px", borderRadius:12, border:`1px solid ${COLORS.border}`,
+              background:"transparent", color:COLORS.muted, fontSize:10,
+              cursor:"pointer", fontWeight:600, fontFamily:"inherit",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor=COLORS.red; e.currentTarget.style.color=COLORS.red; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor=COLORS.border; e.currentTarget.style.color=COLORS.muted; }}
+            >Sign out</button>
+          </div>
           <button onClick={() => setShowSettings(s => !s)} style={{
             padding: "7px 16px", cursor: "pointer", fontSize: 12, fontWeight: 600,
             background: "rgba(255,255,255,0.04)", border: "1px solid #1c1c2e",
