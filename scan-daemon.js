@@ -36,7 +36,7 @@ function loadConfig() {
 }
 
 const ENV = loadEnv();
-const config = loadConfig();
+let config = loadConfig();
 
 const OPENAI_KEY    = ENV.VITE_OPENAI_KEY;
 const FINNHUB_KEY   = ENV.VITE_FINNHUB_KEY;
@@ -325,6 +325,7 @@ function saveHistory(results) {
 // ─── Main scan loop ─────────────────────────────────────────────────────────
 
 async function runScan() {
+  config = loadConfig(); // reload on every scan — picks up UI settings changes
   const ts = new Date().toLocaleTimeString();
   console.log(`\n[${ts}] Starting scan...`);
 

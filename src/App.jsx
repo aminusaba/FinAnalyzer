@@ -88,6 +88,12 @@ function AppInner({ session, onLogout }) {
   const updateSettings = (newSettings) => {
     setNotifSettings(newSettings);
     try { localStorage.setItem(settingsKey, JSON.stringify(newSettings)); } catch {}
+    // Sync to daemon-config.json via Vite dev server so background daemon stays in sync
+    fetch('/api/sync-daemon-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newSettings),
+    }).catch(() => {}); // fire and forget — daemon sync is best-effort
   };
 
   // MCP auto-connect
