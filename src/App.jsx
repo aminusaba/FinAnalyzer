@@ -177,9 +177,10 @@ function AppInner({ session, onLogout }) {
       return;
     }
 
-    // Step 2: fetch account state for buying power check + portfolio context
+    // Step 2: fetch account state — buying power + full position map for GPT context
     let buyingPower = null;
-    let portfolioContext = null;
+    let currentPositions = new Map(); // symbol → { qty, avgPrice, marketValue }
+
     if (notifSettings.alpacaKey && notifSettings.alpacaSecret) {
       try {
         const [account, positions] = await Promise.all([
@@ -187,15 +188,30 @@ function AppInner({ session, onLogout }) {
           getPositions(notifSettings),
         ]);
         buyingPower = parseFloat(account.buying_power || account.cash || 0);
-        if (Array.isArray(positions) && positions.length) {
-          portfolioContext = positions
-            .map(p => `${p.symbol}: ${p.qty} shares @ avg $${parseFloat(p.avg_entry_price || 0).toFixed(2)}, mkt value $${parseFloat(p.market_value || 0).toFixed(0)}`)
-            .join("; ");
+        if (Array.isArray(positions)) {
+          for (const p of positions) {
+            currentPositions.set(p.symbol, {
+              qty:         parseFloat(p.qty || 0),
+              avgPrice:    parseFloat(p.avg_entry_price || 0),
+              marketValue: parseFloat(p.market_value || 0),
+            });
+          }
         }
       } catch {
         // Non-fatal — continue without account data
       }
     }
+
+    // Builds a concise portfolio summary for GPT — called before each symbol analysis
+    const buildPortfolioContext = (positions, bp) => {
+      const totalInvested = [...positions.values()].reduce((s, p) => s + p.marketValue, 0);
+      const header = `Buying power: $${bp?.toFixed(0) ?? "unknown"} | Total invested: $${totalInvested.toFixed(0)}`;
+      if (!positions.size) return header;
+      const holdings = [...positions.entries()]
+        .map(([sym, p]) => `${sym}: ${p.qty.toFixed(4)} shares @ avg $${p.avgPrice.toFixed(2)} (value $${p.marketValue.toFixed(0)})`)
+        .join("; ");
+      return `${header}\nHoldings: ${holdings}`;
+    };
 
     // Step 3: separate cached from uncached
     const toAnalyze = [];
@@ -213,13 +229,15 @@ function AppInner({ session, onLogout }) {
     setProgressLabel(`Found ${allSymbols.length} symbols — analyzing ${toAnalyze.length} new...`);
 
     // Step 4: GPT analysis + auto-trade
-    let remainingBuyingPower = buyingPower; // track spend within this scan
+    let remainingBuyingPower = buyingPower;
     for (let i = 0; i < toAnalyze.length; i++) {
       if (abortRef.current) break;
       const sym = toAnalyze[i];
       setProgressLabel(`Analyzing ${sym.symbol} (${i + 1}/${toAnalyze.length})...`);
       try {
         const bars = await getMarketBars(sym.symbol, sym.assetClass);
+        // Rebuild portfolio context before every GPT call so it reflects orders placed this scan
+        const portfolioContext = buildPortfolioContext(currentPositions, remainingBuyingPower);
         const r = await analyzeSymbol({ ...sym, bars, portfolioContext });
         setCache(sym.symbol, r, session.key);
         setResults(prev => [...prev.filter(x => x.symbol !== r.symbol), r]);
@@ -232,33 +250,47 @@ function AppInner({ session, onLogout }) {
         // Auto-trade
         if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret) {
           const supported = isAlpacaSupported(r.assetClass);
-          const notional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
+          const targetNotional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
+          const existingPosition = currentPositions.get(r.symbol);
+          const alreadyInvested = existingPosition?.marketValue ?? 0;
+          // Only buy the difference between target allocation and what we already hold
+          const notional = Math.max(0, targetNotional - alreadyInvested);
           const meetsScore = r.score >= notifSettings.minScore;
           const meetsConviction = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
 
           if (r.signal === "BUY") {
             if (circuitBreaker.current.tripped) {
-              addToast(`⚡ ${r.symbol} BUY skipped — circuit breaker tripped (3 consecutive order failures)`, "alert");
+              addToast(`⚡ ${r.symbol} BUY skipped — circuit breaker tripped`, "alert");
             } else if (!supported) {
-              addToast(`⚡ ${r.symbol} BUY signal — skipped (${r.assetClass} not supported on Alpaca)`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — ${r.assetClass} not supported on Alpaca`, "insight");
             } else if (!meetsScore) {
-              addToast(`⚡ ${r.symbol} BUY signal — skipped (score ${r.score} < min ${notifSettings.minScore})`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — score ${r.score} < min ${notifSettings.minScore}`, "insight");
             } else if (!meetsConviction) {
-              addToast(`⚡ ${r.symbol} BUY signal — skipped (conviction ${r.conviction} below threshold)`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — conviction ${r.conviction} below threshold`, "insight");
+            } else if (alreadyInvested >= targetNotional * 0.9) {
+              addToast(`⚡ ${r.symbol} BUY skipped — already holding $${alreadyInvested.toFixed(0)} (target $${targetNotional.toFixed(0)})`, "insight");
             } else if (notional < 1) {
-              addToast(`⚡ ${r.symbol} BUY signal — skipped (wallet size not set or too small)`, "insight");
+              addToast(`⚡ ${r.symbol} BUY skipped — wallet size not set or allocation too small`, "insight");
             } else if (remainingBuyingPower !== null && notional > remainingBuyingPower) {
               addToast(`⚡ ${r.symbol} BUY skipped — insufficient buying power ($${remainingBuyingPower.toFixed(0)} available, $${notional.toFixed(0)} needed)`, "insight");
             } else {
               try {
                 const useBracket = notifSettings.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
                 await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
-                circuitBreaker.current.failures = 0; // reset on success
+                circuitBreaker.current.failures = 0;
                 if (remainingBuyingPower !== null) remainingBuyingPower -= notional;
+                // Update live position map so subsequent GPT calls know we now hold this
+                const newQty = (existingPosition?.qty ?? 0) + (r.price ? notional / r.price : 0);
+                currentPositions.set(r.symbol, {
+                  qty: newQty,
+                  avgPrice: r.price ?? existingPosition?.avgPrice ?? 0,
+                  marketValue: alreadyInvested + notional,
+                });
+                const existingNote = alreadyInvested > 0 ? ` (adding to existing $${alreadyInvested.toFixed(0)} position)` : "";
                 const bracketNote = useBracket
                   ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
-                  : r._bracketInvalid ? " · (bracket skipped — invalid R/R math)" : "";
-                addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)${bracketNote}`, "insight");
+                  : r._bracketInvalid ? " · (bracket skipped — invalid R/R)" : "";
+                addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)}${existingNote}${bracketNote}`, "insight");
                 await sendOrderFill(notifSettings, { symbol: r.symbol, side: "buy", notional, stop: r.stop, target: r.target, bracket: useBracket });
               } catch (e) {
                 circuitBreaker.current.failures++;
@@ -272,8 +304,9 @@ function AppInner({ session, onLogout }) {
           } else if (r.signal === "SELL" && supported) {
             try {
               await closePosition(r.symbol, notifSettings);
+              currentPositions.delete(r.symbol); // remove from live map
               addToast(`📤 Auto-closed position in ${r.symbol}`, "insight");
-              await sendOrderFill(notifSettings, { symbol: r.symbol, side: "sell", notional: 0 });
+              await sendOrderFill(notifSettings, { symbol: r.symbol, side: "sell", notional: alreadyInvested });
             } catch {
               // No position to close — silently ignore
             }

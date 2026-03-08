@@ -238,19 +238,23 @@ async function alertOrder(symbol, side, notional, extra = "") {
 
 // ─── Auto-trade ─────────────────────────────────────────────────────────────
 
-async function maybeAutoTrade(r, buyingPower, circuitBreaker) {
-  if (!config.autoTradeEnabled || !config.alpacaKey || !config.alpacaSecret) return buyingPower;
+async function maybeAutoTrade(r, currentPositions, remainingBuyingPower, circuitBreaker) {
+  if (!config.autoTradeEnabled || !config.alpacaKey || !config.alpacaSecret) return remainingBuyingPower;
   const isSupported = r.assetClass === "Equity" || r.assetClass === "ETF";
-  if (!isSupported) return buyingPower;
+  if (!isSupported) return remainingBuyingPower;
 
-  const notional = (config.walletSize || 0) * (r.allocation_pct / 100);
+  const existingPosition = currentPositions.get(r.symbol);
+  const alreadyInvested = existingPosition?.marketValue ?? 0;
+  const targetNotional = (config.walletSize || 0) * (r.allocation_pct / 100);
+  const notional = Math.max(0, targetNotional - alreadyInvested);
 
   if (r.signal === "BUY") {
-    if (circuitBreaker.tripped) { console.log(`  ⚡ ${r.symbol}: circuit breaker tripped`); return buyingPower; }
-    if (r.score < (config.minScore || 75)) { console.log(`  ⚡ ${r.symbol}: score too low (${r.score})`); return buyingPower; }
-    if (r.conviction !== "HIGH" && config.minConviction === "HIGH") { console.log(`  ⚡ ${r.symbol}: conviction ${r.conviction} below threshold`); return buyingPower; }
-    if (notional < 1) { console.log(`  ⚡ ${r.symbol}: wallet size not set`); return buyingPower; }
-    if (buyingPower !== null && notional > buyingPower) { console.log(`  ⚡ ${r.symbol}: insufficient buying power ($${buyingPower?.toFixed(0)} < $${notional.toFixed(0)})`); return buyingPower; }
+    if (circuitBreaker.tripped) { console.log(`  ⚡ ${r.symbol}: circuit breaker tripped`); return remainingBuyingPower; }
+    if (r.score < (config.minScore || 75)) { console.log(`  ⚡ ${r.symbol}: score too low (${r.score})`); return remainingBuyingPower; }
+    if (r.conviction !== "HIGH" && config.minConviction === "HIGH") { console.log(`  ⚡ ${r.symbol}: conviction ${r.conviction} below threshold`); return remainingBuyingPower; }
+    if (alreadyInvested >= targetNotional * 0.9) { console.log(`  ⚡ ${r.symbol}: already holding $${alreadyInvested.toFixed(0)} (target $${targetNotional.toFixed(0)})`); return remainingBuyingPower; }
+    if (notional < 1) { console.log(`  ⚡ ${r.symbol}: allocation too small`); return remainingBuyingPower; }
+    if (remainingBuyingPower !== null && notional > remainingBuyingPower) { console.log(`  ⚡ ${r.symbol}: insufficient buying power ($${remainingBuyingPower?.toFixed(0)} < $${notional.toFixed(0)})`); return remainingBuyingPower; }
 
     try {
       const useBracket = config.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
@@ -265,11 +269,17 @@ async function maybeAutoTrade(r, buyingPower, circuitBreaker) {
       };
       await alpacaPost("/v2/orders", body);
       circuitBreaker.failures = 0;
-      if (buyingPower !== null) buyingPower -= notional;
-
+      remainingBuyingPower -= notional;
+      // Update live position map
+      currentPositions.set(r.symbol, {
+        qty: (existingPosition?.qty ?? 0) + qty,
+        avgPrice: r.price,
+        marketValue: alreadyInvested + notional,
+      });
+      const existingNote = alreadyInvested > 0 ? ` (adding to $${alreadyInvested.toFixed(0)} existing)` : "";
       const bracketNote = useBracket ? ` | SL $${r.stop.toFixed(2)} / TP $${r.target.toFixed(2)}` : "";
-      console.log(`  🛒 Bought ${r.symbol} · $${notional.toFixed(0)}${bracketNote}`);
-      await alertOrder(r.symbol, "buy", notional, bracketNote);
+      console.log(`  🛒 Bought ${r.symbol} · $${notional.toFixed(0)}${existingNote}${bracketNote}`);
+      await alertOrder(r.symbol, "buy", notional, `${existingNote}${bracketNote}`);
     } catch (e) {
       circuitBreaker.failures++;
       if (circuitBreaker.failures >= 3) { circuitBreaker.tripped = true; console.log("  ⛔ Circuit breaker tripped"); }
@@ -278,12 +288,13 @@ async function maybeAutoTrade(r, buyingPower, circuitBreaker) {
   } else if (r.signal === "SELL") {
     try {
       await fetch(`${tradeBase()}/v2/positions/${encodeURIComponent(r.symbol)}`, { method: "DELETE", headers: alpacaHeaders() });
+      currentPositions.delete(r.symbol);
       console.log(`  📤 Closed position: ${r.symbol}`);
-      await alertOrder(r.symbol, "sell", 0);
+      await alertOrder(r.symbol, "sell", alreadyInvested);
     } catch {} // no position to close
   }
 
-  return buyingPower;
+  return remainingBuyingPower;
 }
 
 // ─── History ────────────────────────────────────────────────────────────────
@@ -323,9 +334,9 @@ async function runScan() {
     return;
   }
 
-  // Fetch account state
+  // Fetch account state — buying power + live position map
   let buyingPower = null;
-  let portfolioContext = null;
+  let currentPositions = new Map(); // symbol → { qty, avgPrice, marketValue }
   if (config.alpacaKey && config.alpacaSecret) {
     try {
       const [account, positions] = await Promise.all([
@@ -334,26 +345,46 @@ async function runScan() {
       ]);
       buyingPower = parseFloat(account.buying_power || account.cash || 0);
       console.log(`  Buying power: $${buyingPower.toFixed(0)}`);
-      if (Array.isArray(positions) && positions.length) {
-        portfolioContext = positions
-          .map(p => `${p.symbol}: ${p.qty} @ $${parseFloat(p.avg_entry_price).toFixed(2)}`)
-          .join("; ");
+      if (Array.isArray(positions)) {
+        for (const p of positions) {
+          currentPositions.set(p.symbol, {
+            qty:         parseFloat(p.qty || 0),
+            avgPrice:    parseFloat(p.avg_entry_price || 0),
+            marketValue: parseFloat(p.market_value || 0),
+          });
+        }
+        if (currentPositions.size) {
+          console.log(`  Holdings: ${[...currentPositions.keys()].join(", ")}`);
+        }
       }
     } catch (e) {
       console.warn("  Account fetch failed:", e.message);
     }
   }
 
+  const buildPortfolioContext = (positions, bp) => {
+    const totalInvested = [...positions.values()].reduce((s, p) => s + p.marketValue, 0);
+    const header = `Buying power: $${bp?.toFixed(0) ?? "unknown"} | Total invested: $${totalInvested.toFixed(0)}`;
+    if (!positions.size) return header;
+    const holdings = [...positions.entries()]
+      .map(([sym, p]) => `${sym}: ${p.qty.toFixed(4)} shares @ avg $${p.avgPrice.toFixed(2)} (value $${p.marketValue.toFixed(0)})`)
+      .join("; ");
+    return `${header}\nHoldings: ${holdings}`;
+  };
+
   // Analyze each symbol
   const results = [];
   const circuitBreaker = { failures: 0, tripped: false };
   const topSymbols = allSymbols.slice(0, config.maxSymbols || 30); // cap to avoid excessive GPT cost
 
+  let remainingBuyingPower = buyingPower;
   for (let i = 0; i < topSymbols.length; i++) {
     const sym = topSymbols[i];
     process.stdout.write(`  [${i + 1}/${topSymbols.length}] ${sym.symbol.padEnd(10)} `);
 
     try {
+      // Rebuild context before each call so GPT sees orders placed earlier in this scan
+      const portfolioContext = buildPortfolioContext(currentPositions, remainingBuyingPower);
       const r = await analyzeSymbol(sym, portfolioContext);
       results.push(r);
 
@@ -365,8 +396,8 @@ async function runScan() {
         await alertSignal(r);
       }
 
-      // Auto-trade
-      buyingPower = await maybeAutoTrade(r, buyingPower, circuitBreaker);
+      // Auto-trade (updates currentPositions and remainingBuyingPower in place)
+      remainingBuyingPower = await maybeAutoTrade(r, currentPositions, remainingBuyingPower, circuitBreaker);
 
       // Small delay to avoid OpenAI rate limits
       await new Promise(res => setTimeout(res, 300));
