@@ -11,6 +11,8 @@ import { SettingsPanel } from "./components/SettingsPanel.jsx";
 import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
 import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
+import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
+import { placeOrder, closePosition, isAlpacaSupported } from "./lib/alpaca.js";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -19,7 +21,12 @@ const DEFAULT_SETTINGS = {
   minScore: 75,
   minConviction: "HIGH",
   autoScanEnabled: false,
-  autoScanInterval: 30, // minutes
+  autoScanInterval: 30,
+  alpacaKey: "",
+  alpacaSecret: "",
+  alpacaMode: "paper",
+  walletSize: 10000,
+  autoTradeEnabled: false,
 };
 
 const SCAN_INTERVALS = [5, 10, 15, 30, 60, 120];
@@ -50,7 +57,7 @@ function AppInner({ session, onLogout }) {
   const [filterSignal, setFilterSignal] = useState("All");
   const [showSettings, setShowSettings] = useState(false);
   const [notifSettings, setNotifSettings] = useState(DEFAULT_SETTINGS);
-  const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history"
+  const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history" | "portfolio"
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(null);
@@ -160,6 +167,25 @@ function AppInner({ session, onLogout }) {
         await sendAlerts(r, notifSettings);
         if (r.signal === "BUY" && r.score >= notifSettings.minScore) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
+        }
+        // Auto-trade
+        if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret && isAlpacaSupported(r.assetClass)) {
+          const notional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
+          if (r.signal === "BUY" && r.score >= notifSettings.minScore && notional >= 1) {
+            try {
+              await placeOrder(r.symbol, "buy", notional, notifSettings);
+              addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)} (${r.allocation_pct}% allocation)`, "insight");
+            } catch (e) {
+              addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
+            }
+          } else if (r.signal === "SELL") {
+            try {
+              await closePosition(r.symbol, notifSettings);
+              addToast(`📤 Auto-closed position in ${r.symbol}`, "insight");
+            } catch {
+              // No position to close — silently ignore
+            }
+          }
         }
       } catch (e) {
         console.error(sym.symbol, e.message);
@@ -326,7 +352,7 @@ function AppInner({ session, onLogout }) {
 
       {/* Tab bar */}
       <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: "0 28px", display: "flex", gap: 2 }}>
-        {[["scan", "📡 Live Scan"], ["history", "🕓 History"]].map(([tab, label]) => (
+        {[["scan", "📡 Live Scan"], ["history", "🕓 History"], ["portfolio", "💼 Portfolio"]].map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: "12px 20px", background: "none", border: "none", cursor: "pointer",
             fontSize: 12, fontWeight: 600, letterSpacing: 0.3,
@@ -343,6 +369,8 @@ function AppInner({ session, onLogout }) {
         <div style={{ overflowY:"auto", padding:20 }}>
         {activeTab === "history" ? (
           <HistoryPanel history={history} loading={historyLoading} error={historyError} />
+        ) : activeTab === "portfolio" ? (
+          <PortfolioPanel settings={notifSettings} />
         ) : (<>
 
           {/* Top picks */}

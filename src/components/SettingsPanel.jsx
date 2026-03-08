@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { COLORS } from "../lib/universe.js";
 import { sendTelegram } from "../lib/notifications.js";
+import { getAccount } from "../lib/alpaca.js";
 
 export function SettingsPanel({ settings, onChange, onClose }) {
   const set = (key, val) => onChange({ ...settings, [key]: val });
+  const [alpacaTestMsg, setAlpacaTestMsg] = useState("");
 
   const testTelegram = async () => {
     if (!settings.telegramChatId) return alert("Enter your Telegram Chat ID first");
@@ -107,6 +110,67 @@ export function SettingsPanel({ settings, onChange, onClose }) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Alpaca Trading */}
+      <div style={{ padding: "14px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Alpaca Auto-Trading</div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>API Key ID</div>
+          <input style={inputStyle} value={settings.alpacaKey || ""} onChange={e => set("alpacaKey", e.target.value)} placeholder="PKXXXXXXXXXXXXXXXXXXXXXXXX" />
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Secret Key</div>
+          <input type="password" style={inputStyle} value={settings.alpacaSecret || ""} onChange={e => set("alpacaSecret", e.target.value)} placeholder="••••••••••••••••••••••••••••••••" />
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 6 }}>Mode</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["paper", "🧪 Paper"], ["live", "⚡ Live"]].map(([m, label]) => (
+              <button key={m} onClick={() => set("alpacaMode", m)} style={{
+                padding: "5px 14px", borderRadius: 14, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                border: `1px solid ${settings.alpacaMode === m ? (m === "live" ? COLORS.red : COLORS.gold) : COLORS.border}`,
+                background: settings.alpacaMode === m ? (m === "live" ? "rgba(255,77,109,0.1)" : "rgba(240,180,41,0.1)") : "transparent",
+                color: settings.alpacaMode === m ? (m === "live" ? COLORS.red : COLORS.gold) : COLORS.muted,
+                fontFamily: "inherit",
+              }}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Wallet Size (USD)</div>
+          <input type="number" style={inputStyle} value={settings.walletSize || ""} onChange={e => set("walletSize", parseFloat(e.target.value) || 0)} placeholder="e.g. 10000" min={0} />
+        </div>
+
+        <button onClick={async () => {
+          setAlpacaTestMsg("Connecting...");
+          try {
+            const acc = await getAccount(settings);
+            setAlpacaTestMsg(`✓ Connected — Portfolio: $${parseFloat(acc.equity).toFixed(2)}`);
+          } catch (e) {
+            setAlpacaTestMsg(`✗ ${e.message}`);
+          }
+        }} style={{
+          padding: "6px 14px", background: "rgba(0,212,170,0.1)",
+          border: `1px solid ${COLORS.accent}`, borderRadius: 6, color: COLORS.accent,
+          fontSize: 11, cursor: "pointer", fontWeight: 600, fontFamily: "inherit",
+        }}>Test Connection</button>
+        {alpacaTestMsg && (
+          <div style={{ marginTop: 8, fontSize: 11, color: alpacaTestMsg.startsWith("✓") ? COLORS.green : COLORS.red }}>{alpacaTestMsg}</div>
+        )}
+      </div>
+
+      {/* Auto-trade toggle */}
+      <div style={rowStyle}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>Auto-Trade on BUY signals</div>
+          <div style={{ fontSize: 11, color: COLORS.muted }}>Place orders automatically during scans</div>
+        </div>
+        {toggle(settings.autoTradeEnabled, "autoTradeEnabled")}
       </div>
 
       {/* Thresholds */}
