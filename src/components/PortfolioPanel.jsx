@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { COLORS } from "../lib/universe.js";
-import { getAccount, getPositions, getOrders, closePosition, isAlpacaSupported } from "../lib/alpaca.js";
+import { getAccount, getPositions, getOrders, closePosition } from "../lib/trading.js";
 
 function StatCard({ label, value, color, sub }) {
   return (
@@ -15,7 +15,7 @@ function StatCard({ label, value, color, sub }) {
   );
 }
 
-export function PortfolioPanel({ settings }) {
+export function PortfolioPanel({ settings, mcpStatus }) {
   const [account, setAccount] = useState(null);
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -94,16 +94,28 @@ export function PortfolioPanel({ settings }) {
         </div>
       )}
 
-      {/* Mode badge */}
+      {/* Mode + MCP badges */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <span style={{
-          fontSize: 9, fontWeight: 800, padding: "4px 12px", borderRadius: 20, letterSpacing: 1, textTransform: "uppercase",
-          background: settings.alpacaMode === "live" ? "rgba(255,77,109,0.15)" : "rgba(240,180,41,0.12)",
-          border: `1px solid ${settings.alpacaMode === "live" ? "rgba(255,77,109,0.4)" : "rgba(240,180,41,0.3)"}`,
-          color: settings.alpacaMode === "live" ? COLORS.red : COLORS.gold,
-        }}>
-          {settings.alpacaMode === "live" ? "⚡ Live Trading" : "🧪 Paper Trading"}
-        </span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{
+            fontSize: 9, fontWeight: 800, padding: "4px 12px", borderRadius: 20, letterSpacing: 1, textTransform: "uppercase",
+            background: settings.alpacaMode === "live" ? "rgba(255,77,109,0.15)" : "rgba(240,180,41,0.12)",
+            border: `1px solid ${settings.alpacaMode === "live" ? "rgba(255,77,109,0.4)" : "rgba(240,180,41,0.3)"}`,
+            color: settings.alpacaMode === "live" ? COLORS.red : COLORS.gold,
+          }}>
+            {settings.alpacaMode === "live" ? "⚡ Live" : "🧪 Paper"}
+          </span>
+          <span style={{
+            fontSize: 9, fontWeight: 800, padding: "4px 10px", borderRadius: 20, letterSpacing: 1,
+            display: "flex", alignItems: "center", gap: 5,
+            background: mcpStatus === "connected" ? "rgba(0,212,170,0.1)" : "rgba(107,107,138,0.08)",
+            border: `1px solid ${mcpStatus === "connected" ? "rgba(0,212,170,0.3)" : "rgba(107,107,138,0.2)"}`,
+            color: mcpStatus === "connected" ? COLORS.green : COLORS.muted,
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: mcpStatus === "connected" ? COLORS.green : "#3a3a5a", display: "inline-block" }} />
+            MCP {mcpStatus === "connected" ? "On" : "Off"}
+          </span>
+        </div>
         <button onClick={load} disabled={loading} style={{
           padding: "5px 12px", borderRadius: 12, border: `1px solid ${COLORS.border}`,
           background: "transparent", color: COLORS.muted, fontSize: 10, cursor: "pointer", fontFamily: "inherit",

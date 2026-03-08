@@ -112,6 +112,27 @@ export function SettingsPanel({ settings, onChange, onClose }) {
         )}
       </div>
 
+      {/* MCP Server */}
+      <div style={{ padding: "14px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>MCP Server</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>Enable Alpaca MCP</div>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>Use MCP server for trading (run start-mcp.bat)</div>
+          </div>
+          {toggle(settings.mcpEnabled, "mcpEnabled")}
+        </div>
+        {settings.mcpEnabled && (
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>MCP Server URL</div>
+            <input style={inputStyle} value={settings.mcpUrl || "http://localhost:8000"} onChange={e => set("mcpUrl", e.target.value)} placeholder="http://localhost:8000" />
+            <div style={{ fontSize: 10, color: "#2a2a45", marginTop: 6 }}>
+              Run <code style={{ background: "rgba(255,255,255,0.06)", padding: "1px 5px", borderRadius: 3 }}>start-mcp.bat</code> in the project folder to start
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Alpaca Trading */}
       <div style={{ padding: "14px 0", borderBottom: `1px solid ${COLORS.border}` }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Alpaca Auto-Trading</div>

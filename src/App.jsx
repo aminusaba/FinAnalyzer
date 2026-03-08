@@ -12,7 +12,8 @@ import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
 import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
-import { placeOrder, closePosition, isAlpacaSupported } from "./lib/alpaca.js";
+import { placeOrder, closePosition, isAlpacaSupported } from "./lib/trading.js";
+import { initialize as mcpInit, isReady as mcpReady, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -28,6 +29,8 @@ const DEFAULT_SETTINGS = {
   walletSize: 10000,
   autoTradeEnabled: false,
   bracketOrdersEnabled: true,
+  mcpUrl: "http://localhost:8000",
+  mcpEnabled: true,
 };
 
 const SCAN_INTERVALS = [5, 10, 15, 30, 60, 120];
@@ -64,6 +67,7 @@ function AppInner({ session, onLogout }) {
   const [historyError, setHistoryError] = useState(null);
   const { fetchHistory } = useHistory();
   const [nextScanIn, setNextScanIn] = useState(null); // seconds until next auto-scan
+  const [mcpStatus, setMcpStatus] = useState("disconnected"); // "disconnected" | "connecting" | "connected"
   const abortRef = useRef(false);
   const toastId = useRef(0);
   const autoScanTimer = useRef(null);
@@ -80,6 +84,15 @@ function AppInner({ session, onLogout }) {
   useEffect(() => {
     localStorage.setItem(settingsKey, JSON.stringify(notifSettings));
   }, [notifSettings, settingsKey]);
+
+  // MCP auto-connect
+  useEffect(() => {
+    if (!notifSettings.mcpEnabled) { mcpReset(); setMcpStatus("disconnected"); return; }
+    setMcpStatus("connecting");
+    mcpInit(notifSettings.mcpUrl)
+      .then(() => setMcpStatus("connected"))
+      .catch(() => setMcpStatus("disconnected"));
+  }, [notifSettings.mcpEnabled, notifSettings.mcpUrl]);
 
   // Fetch history when tab is opened
   useEffect(() => {
@@ -174,7 +187,7 @@ function AppInner({ session, onLogout }) {
           const notional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
           if (r.signal === "BUY" && r.score >= notifSettings.minScore && notional >= 1) {
             try {
-              await placeOrder(r.symbol, "buy", notional, notifSettings, { stopPrice: r.stop, takeProfitPrice: r.target });
+              await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
               const bracketNote = notifSettings.bracketOrdersEnabled && r.stop && r.target
                 ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
                 : "";
@@ -279,6 +292,18 @@ function AppInner({ session, onLogout }) {
 
         {/* Center status */}
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          {/* MCP status */}
+          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <div style={{
+              width:7, height:7, borderRadius:"50%",
+              background: mcpStatus === "connected" ? COLORS.green : mcpStatus === "connecting" ? COLORS.gold : "#3a3a5a",
+              boxShadow: mcpStatus === "connected" ? `0 0 6px ${COLORS.green}` : "none",
+              animation: mcpStatus === "connecting" ? "pulse 1s infinite" : "none",
+            }} />
+            <span style={{ fontSize:10, color: mcpStatus === "connected" ? COLORS.green : COLORS.muted, fontWeight:600 }}>
+              MCP {mcpStatus === "connected" ? "Connected" : mcpStatus === "connecting" ? "Connecting..." : "Off"}
+            </span>
+          </div>
           {scanning && (
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ width:10, height:10, borderRadius:"50%", background:COLORS.accent, animation:"pulse 1s infinite", boxShadow:`0 0 8px ${COLORS.accent}` }} />
@@ -374,7 +399,7 @@ function AppInner({ session, onLogout }) {
         {activeTab === "history" ? (
           <HistoryPanel history={history} loading={historyLoading} error={historyError} />
         ) : activeTab === "portfolio" ? (
-          <PortfolioPanel settings={notifSettings} />
+          <PortfolioPanel settings={notifSettings} mcpStatus={mcpStatus} />
         ) : (<>
 
           {/* Top picks */}
