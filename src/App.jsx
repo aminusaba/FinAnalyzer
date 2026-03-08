@@ -45,7 +45,7 @@ export default function App() {
 
   useEffect(() => {
     const saved = localStorage.getItem("finanalyzer_notif");
-    if (saved) setNotifSettings(JSON.parse(saved));
+    if (saved) setNotifSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
   }, []);
 
   useEffect(() => {
