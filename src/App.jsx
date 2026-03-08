@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { COLORS } from "./lib/universe.js";
-import { fetchTopMovers } from "./lib/finnhub.js";
+import { fetchAllMarketData } from "./lib/market-data.js";
+import { getCached, setCache } from "./lib/analysis-cache.js";
 import { analyzeSymbol, deepDiveSymbol } from "./lib/openai.js";
 import { sendAlerts } from "./lib/notifications.js";
 import { Toast } from "./components/Toast.jsx";
@@ -13,7 +14,7 @@ import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
 import { placeOrder, closePosition, isAlpacaSupported, getMarketBars } from "./lib/trading.js";
-import { initialize as mcpInit, isReady as mcpReady, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
+import { initialize as mcpInit, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -156,30 +157,50 @@ function AppInner({ session, onLogout }) {
     setProgress(0);
     setResults([]);
 
-    setProgressLabel("Fetching live market data...");
-    let symbols = [];
+    // Step 1: gather data from all sources in parallel (Finnhub + Alpaca + MCP crypto)
+    setProgressLabel("Gathering market data from all sources...");
+    let allSymbols = [];
     try {
-      symbols = await fetchTopMovers();
+      allSymbols = await fetchAllMarketData(notifSettings);
     } catch (e) {
       setProgressLabel(`Feed error: ${e.message}`);
       setScanning(false);
       return;
     }
 
-    if (!symbols.length) {
-      setProgressLabel("No symbols returned. Check your Finnhub key.");
+    if (!allSymbols.length) {
+      setProgressLabel("No market data returned. Check your API keys.");
       setScanning(false);
       return;
     }
 
-    for (let i = 0; i < symbols.length; i++) {
+    // Step 2: separate cached (show immediately) from uncached (need GPT analysis)
+    const toAnalyze = [];
+    const cachedResults = [];
+    for (const sym of allSymbols) {
+      const hit = getCached(sym.symbol, session.key);
+      if (hit) {
+        cachedResults.push({ ...hit, price: sym.price, change_pct: sym.change_pct }); // refresh price
+      } else {
+        toAnalyze.push(sym);
+      }
+    }
+
+    // Show cached results immediately so user sees data while new analysis runs
+    if (cachedResults.length) setResults(cachedResults);
+
+    setProgressLabel(`Found ${allSymbols.length} symbols — analyzing ${toAnalyze.length} new...`);
+
+    // Step 3: analyze only uncached symbols
+    for (let i = 0; i < toAnalyze.length; i++) {
       if (abortRef.current) break;
-      const sym = symbols[i];
-      setProgressLabel(`Analyzing ${sym.symbol}...`);
+      const sym = toAnalyze[i];
+      setProgressLabel(`Analyzing ${sym.symbol} (${i + 1}/${toAnalyze.length})...`);
       try {
         const bars = await getMarketBars(sym.symbol, sym.assetClass);
         const r = await analyzeSymbol({ ...sym, bars });
-        setResults(prev => [...prev, r]);
+        setCache(sym.symbol, r, session.key);
+        setResults(prev => [...prev.filter(x => x.symbol !== r.symbol), r]);
         await sendAlerts(r, notifSettings);
         if (r.signal === "BUY" && r.score >= notifSettings.minScore) {
           addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
@@ -209,10 +230,10 @@ function AppInner({ session, onLogout }) {
       } catch (e) {
         console.error(sym.symbol, e.message);
       }
-      setProgress(Math.round(((i + 1) / symbols.length) * 100));
+      setProgress(Math.round(((i + 1) / toAnalyze.length) * 100));
       await new Promise(r => setTimeout(r, 200));
     }
-    setProgressLabel("Scan complete");
+    setProgressLabel(`Scan complete — ${allSymbols.length} symbols, ${toAnalyze.length} analyzed, ${cachedResults.length} from cache`);
     setScanning(false);
   };
 

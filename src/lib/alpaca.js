@@ -54,6 +54,11 @@ export async function closePosition(symbol, settings) {
   return alpacaFetch(`/v2/positions/${encodeURIComponent(symbol)}`, "DELETE", null, settings);
 }
 
+// Batch snapshot — returns price + prev daily bar for change% calculation
+export async function getSnapshots(symbols, settings) {
+  return alpacaFetch(`/v2/stocks/snapshots?symbols=${symbols.join(",")}`, "GET", null, settings);
+}
+
 // Only Equity and ETF are supported on Alpaca paper trading
 export function isAlpacaSupported(assetClass) {
   return assetClass === "Equity" || assetClass === "ETF";
