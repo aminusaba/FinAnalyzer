@@ -14,28 +14,45 @@ async function tgSend(chatId, text) {
 }
 
 export const sendTelegram = async (chatId, result) => {
-  const { symbol, signal, score, conviction, assetClass, investor_thesis, target, stop } = result;
+  const { symbol, signal, score, conviction, assetClass, market, sector, investor_thesis, swing_thesis, target, stop } = result;
   const emoji = signal === "BUY" ? "🟢" : signal === "SELL" ? "🔴" : "🟡";
-  const text = `${emoji} <b>${signal}: ${symbol}</b> [${assetClass}]\nScore: ${score} | Conviction: ${conviction}\nTarget: ${target} | Stop: ${stop}\n\n${investor_thesis}`;
+  const text =
+    `${emoji} <b>${signal}: ${symbol}</b> [${market || assetClass}]\n` +
+    `📊 Score: ${score} | Conviction: ${conviction}\n` +
+    (sector ? `🏷 Sector: ${sector}\n` : "") +
+    (target  ? `🎯 Target: ${target} | 🛑 Stop: ${stop}\n` : "") +
+    (swing_thesis || investor_thesis ? `\n💡 ${(swing_thesis || investor_thesis || "").slice(0, 300)}` : "");
   return tgSend(chatId, text);
 };
 
 export const sendOrderFill = async (settings, { symbol, side, notional, stop, target, bracket }) => {
   if (!settings.telegramEnabled || !settings.telegramChatId) return;
   const emoji = side === "buy" ? "🛒" : "📤";
-  const bracketNote = bracket ? `\nSL: ${stop} | TP: ${target}` : "";
+  const bracketNote = bracket && stop && target ? `\nSL: $${Number(stop).toFixed(2)} | TP: $${Number(target).toFixed(2)}` : "";
   const text = `${emoji} <b>Order placed: ${side.toUpperCase()} ${symbol}</b>\nAmount: $${Number(notional).toFixed(2)}${bracketNote}`;
   return tgSend(settings.telegramChatId, text);
 };
 
+function isUSMarketOpenNow() {
+  const now = new Date();
+  if (now.getDay() === 0 || now.getDay() === 6) return false;
+  const et   = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const mins = et.getHours() * 60 + et.getMinutes();
+  return mins >= 570 && mins < 960; // 9:30 AM–4:00 PM ET
+}
+
 export const sendAlerts = async (result, settings) => {
-  const { signal, score, conviction } = result;
+  const { signal, score, conviction, assetClass } = result;
   const meetsThreshold =
     signal === "BUY" &&
     score >= settings.minScore &&
     (settings.minConviction === "ANY" || conviction === "HIGH");
 
   if (!meetsThreshold) return;
+
+  // Suppress BUY alerts outside market hours — crypto exempt (trades 24/7)
+  const isCrypto = assetClass === "Crypto";
+  if (!isCrypto && !isUSMarketOpenNow()) return;
 
   if (settings.browserEnabled && Notification.permission === "granted") {
     new Notification(`${signal}: ${result.symbol}`, {

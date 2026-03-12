@@ -11,7 +11,7 @@ export function ScoreBadge({ score }) {
   return (
     <div style={{
       width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
-      background: `conic-gradient(${color} ${score * 3.6}deg, #1c1c2e ${score * 3.6}deg)`,
+      background: `conic-gradient(${color} ${score * 3.6}deg, ${COLORS.border} ${score * 3.6}deg)`,
       display: "flex", alignItems: "center", justifyContent: "center",
       boxShadow: `0 0 12px ${glow}`,
       padding: 3,

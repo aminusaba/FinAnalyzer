@@ -1,9 +1,19 @@
 const USERS_KEY = "finanalyzer_users";
 const SESSION_KEY = "finanalyzer_session";
 
-async function hashPassword(password) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+function hashPassword(password) {
+  // Simple hash for local-only auth (no network, no server)
+  let h = 5381;
+  for (let i = 0; i < password.length; i++) {
+    h = ((h << 5) + h) ^ password.charCodeAt(i);
+    h = h >>> 0;
+  }
+  let h2 = 0x811c9dc5;
+  for (let i = 0; i < password.length; i++) {
+    h2 ^= password.charCodeAt(i);
+    h2 = Math.imul(h2, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
 }
 
 function getUsers() {
@@ -22,12 +32,12 @@ export function clearSession() {
   localStorage.removeItem(SESSION_KEY);
 }
 
-export async function register(username, password) {
+export function register(username, password) {
   if (!username.trim() || !password) throw new Error("Username and password required");
   const users = getUsers();
   const key = username.trim().toLowerCase();
   if (users[key]) throw new Error("Username already taken");
-  const hash = await hashPassword(password);
+  const hash = hashPassword(password);
   users[key] = { username: username.trim(), hash, createdAt: Date.now() };
   saveUsers(users);
   const session = { username: username.trim(), key };
@@ -35,13 +45,13 @@ export async function register(username, password) {
   return session;
 }
 
-export async function login(username, password) {
+export function login(username, password) {
   if (!username.trim() || !password) throw new Error("Username and password required");
   const users = getUsers();
   const key = username.trim().toLowerCase();
   const user = users[key];
   if (!user) throw new Error("User not found");
-  const hash = await hashPassword(password);
+  const hash = hashPassword(password);
   if (hash !== user.hash) throw new Error("Incorrect password");
   const session = { username: user.username, key };
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));

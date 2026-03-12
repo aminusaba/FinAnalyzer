@@ -1,22 +1,12 @@
 // Fetches market data only for symbols tradeable on Alpaca (ALPACA_SCAN_SYMBOLS)
-// Alpaca snapshot is primary source; Finnhub is fallback for symbols with no Alpaca data
+// Alpaca snapshot is primary source; Alpha Vantage is fallback for symbols with no Alpaca data
 
 import { ALPACA_SCAN_SYMBOLS } from "./universe.js";
 import { getSnapshots } from "./alpaca.js";
+import { getQuote as avQuote } from "./alphavantage.js";
 
-const FINNHUB_KEY = import.meta.env.VITE_FINNHUB_KEY;
-
-async function finnhubQuote(symbol) {
-  try {
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`);
-    const d = await r.json();
-    if (d?.c) return { price: d.c, change_pct: d.dp ?? 0 };
-  } catch {}
-  return null;
-}
-
-// Concurrency limiter — avoids Finnhub rate-limit (30 req/s free tier)
-async function withConcurrency(fns, limit = 5) {
+// Concurrency limiter — AV paid allows 75 req/min, keep headroom
+async function withConcurrency(fns, limit = 15) {
   const results = new Array(fns.length);
   let idx = 0;
   async function worker() {
@@ -29,15 +19,15 @@ async function withConcurrency(fns, limit = 5) {
   return results;
 }
 
-// Finnhub fallback — only for ALPACA_SCAN_SYMBOLS that Alpaca snapshot missed
-async function fetchFinnhubFallback(missingSymbols) {
-  if (!missingSymbols.length || !FINNHUB_KEY) return [];
+// AV fallback — only for ALPACA_SCAN_SYMBOLS that Alpaca snapshot missed
+async function fetchFallback(missingSymbols) {
+  if (!missingSymbols.length) return [];
   const tasks = missingSymbols.map(({ symbol, assetClass, market }) => async () => {
-    const q = await finnhubQuote(symbol);
+    const q = await avQuote(symbol).catch(() => null);
     if (!q) return null;
     return { symbol, ...q, assetClass, market };
   });
-  const results = await withConcurrency(tasks, 5);
+  const results = await withConcurrency(tasks, 15);
   return results.filter(Boolean);
 }
 
@@ -49,10 +39,23 @@ async function fetchAlpacaSnapshots(settings) {
     return ALPACA_SCAN_SYMBOLS.map(({ symbol, assetClass, market }) => {
       const snap = snapshots[symbol];
       if (!snap) return null;
-      const price     = snap.dailyBar?.c || snap.latestTrade?.p || 0;
+      const price     = snap.latestTrade?.p || snap.dailyBar?.c || 0;
       const prevClose = snap.prevDailyBar?.c;
       const change_pct = prevClose && price ? ((price - prevClose) / prevClose) * 100 : 0;
-      return price > 0 ? { symbol, price, change_pct, assetClass, market } : null;
+      const bidPrice = snap.latestQuote?.bp ?? null;
+      const askPrice = snap.latestQuote?.ap ?? null;
+      const spreadPct = bidPrice && askPrice && askPrice > 0
+        ? +((askPrice - bidPrice) / askPrice * 100).toFixed(4)
+        : null;
+      return price > 0 ? {
+        symbol, price, change_pct, assetClass, market,
+        dayOpen:   snap.dailyBar?.o  || null,
+        dayHigh:   snap.dailyBar?.h  || null,
+        dayLow:    snap.dailyBar?.l  || null,
+        dayVwap:   snap.dailyBar?.vw || null,
+        prevClose: prevClose         || null,
+        bidPrice, askPrice, spreadPct,
+      } : null;
     }).filter(Boolean);
   } catch {}
   return [];
@@ -63,14 +66,14 @@ export async function fetchAllMarketData(settings) {
   const alpacaData = await fetchAlpacaSnapshots(settings);
   const alpacaSet = new Set(alpacaData.map(s => s.symbol));
 
-  // Fallback: Finnhub for any ALPACA_SCAN_SYMBOLS that Alpaca didn't return
+  // Fallback: AV for any ALPACA_SCAN_SYMBOLS that Alpaca didn't return
   const missing = ALPACA_SCAN_SYMBOLS.filter(s => !alpacaSet.has(s.symbol));
-  const finnhubData = await fetchFinnhubFallback(missing);
+  const fallbackData = await fetchFallback(missing);
 
   // Merge — Alpaca takes priority
   const map = new Map();
-  for (const s of finnhubData) map.set(s.symbol, s);
-  for (const s of alpacaData)  map.set(s.symbol, s);
+  for (const s of fallbackData) map.set(s.symbol, s);
+  for (const s of alpacaData)   map.set(s.symbol, s);
 
   // Return only Alpaca-tradeable symbols, sorted by biggest movers first
   return [...map.values()]

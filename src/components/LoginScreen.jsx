@@ -43,13 +43,13 @@ export function LoginScreen({ onAuth }) {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0 }
-        body { background: #06060a }
+        body { background: var(--c-bg) }
         input:focus { border-color: #00d4aa !important; }
       `}</style>
 
       <div style={{
         width: 380, padding: "40px 36px",
-        background: "linear-gradient(180deg, #111120, #0d0d1a)",
+        background: COLORS.cardGrad,
         border: `1px solid ${COLORS.border}`,
         borderRadius: 20,
         boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,212,170,0.05)",
@@ -145,7 +145,7 @@ export function LoginScreen({ onAuth }) {
           </button>
         </form>
 
-        <div style={{ marginTop: 20, textAlign: "center", fontSize: 10, color: "#2a2a42", lineHeight: 1.6 }}>
+        <div style={{ marginTop: 20, textAlign: "center", fontSize: 10, color: COLORS.muted, lineHeight: 1.6 }}>
           Credentials stored locally in your browser
         </div>
       </div>

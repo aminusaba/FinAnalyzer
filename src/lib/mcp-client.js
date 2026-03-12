@@ -50,10 +50,7 @@ async function request(method, params = {}, isNotification = false) {
 }
 
 export async function initialize(url) {
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  state.url = isLocalhost ? "/mcp" : (url || "http://localhost:8000") + "/mcp";
+  state.url = "/mcp"; // always use Vite proxy — works on any hostname
   state.sessionId = null;
   state.initialized = false;
   state.reqId = 0;
@@ -86,10 +83,7 @@ export function reset() {
 // Ping to check if server is reachable (without initializing)
 export async function ping(url) {
   try {
-    const isLocalhost =
-      typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-    const base = isLocalhost ? "/mcp" : (url || "http://localhost:8000") + "/mcp";
+    const base = "/mcp";
     const res = await fetch(base, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },

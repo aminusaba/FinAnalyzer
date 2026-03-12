@@ -4,15 +4,21 @@ echo.
 echo  Stopping FinAnalyzer scan daemon...
 echo.
 
-:: Kill any node process running scan-daemon.js
-taskkill /f /fi "IMAGENAME eq node.exe" /fi "WINDOWTITLE eq FinAnalyzer*" >nul 2>&1
+set LOCK=%~dp0finanalyzer.lock
 
-:: Also find and kill by command line match
-for /f "tokens=2" %%i in ('tasklist /fi "IMAGENAME eq node.exe" /fo csv /nh 2^>nul') do (
-    wmic process where "ProcessId=%%~i and CommandLine like '%%scan-daemon%%'" delete >nul 2>&1
+:: Primary: kill via PID in lock file
+if exist "%LOCK%" (
+    set /p DAEMON_PID=<"%LOCK%"
+    taskkill /F /PID %DAEMON_PID% >nul 2>&1
+    del /F /Q "%LOCK%" >nul 2>&1
+    echo  Daemon stopped (PID %DAEMON_PID%).
+) else (
+    echo  No lock file found — trying fallback...
+    powershell -NoProfile -Command "Get-WmiObject Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*scan-daemon*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+    echo  Fallback kill attempted.
 )
 
-echo  Done. Daemon stopped.
+echo.
 echo  (To stop the scheduled auto-start, run uninstall-scheduler.bat)
 echo.
 pause

@@ -1,20 +1,25 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { Radio, Settings, Sun, Moon, Activity, Clock, Briefcase, AlertTriangle, TrendingUp, TrendingDown, ExternalLink, Cpu, Wifi, WifiOff, Zap, Terminal } from "lucide-react";
 import { COLORS } from "./lib/universe.js";
-import { fetchAllMarketData } from "./lib/market-data.js";
-import { getCached, setCache } from "./lib/analysis-cache.js";
-import { analyzeSymbol, deepDiveSymbol } from "./lib/openai.js";
-import { sendAlerts, sendOrderFill } from "./lib/notifications.js";
+import { deepDiveSymbol } from "./lib/openai.js";
+import { sendOrderFill } from "./lib/notifications.js";
 import { Toast } from "./components/Toast.jsx";
 import { Sparkline } from "./components/Sparkline.jsx";
 import { ScoreBadge, SignalBadge, ConvictionBadge, HorizonTag, AssetClassTag } from "./components/Badges.jsx";
 import { DeepDivePanel } from "./components/DeepDivePanel.jsx";
 import { SettingsPanel } from "./components/SettingsPanel.jsx";
-import { HistoryPanel, useHistory, saveHistory } from "./components/HistoryPanel.jsx";
+import { HistoryPanel, useHistory } from "./components/HistoryPanel.jsx";
+import { loadScanResults, upsertScanResult, loadScanRuns, isDaemonActive, isDaemonAlive, getScanProgress } from "./lib/db.js";
 import { LoginScreen } from "./components/LoginScreen.jsx";
 import { getSession, clearSession, getUserSettingsKey } from "./lib/auth.js";
 import { PortfolioPanel } from "./components/PortfolioPanel.jsx";
-import { placeOrder, closePosition, isAlpacaSupported, getMarketBars, getAccount, getPositions } from "./lib/trading.js";
-import { initialize as mcpInit, ping as mcpPing, reset as mcpReset } from "./lib/mcp-client.js";
+import { DaemonLogPanel } from "./components/DaemonLogPanel.jsx";
+import { MarketStatusBar } from "./components/MarketStatusBar.jsx";
+import { TickerTape } from "./components/TickerTape.jsx";
+import { placeOrder, closePosition, getPositions } from "./lib/trading.js";
+import { initialize as mcpInit, reset as mcpReset } from "./lib/mcp-client.js";
+import { openChartWindow } from "./lib/chart-window.js";
+import { applyTheme, getTheme, THEMES } from "./lib/theme.js";
 
 const DEFAULT_SETTINGS = {
   browserEnabled: true,
@@ -27,15 +32,14 @@ const DEFAULT_SETTINGS = {
   alpacaKey: "",
   alpacaSecret: "",
   alpacaMode: "paper",
-  walletSize: 10000,
   autoTradeEnabled: false,
   bracketOrdersEnabled: true,
   tradingCapitalPct: 100,  // % of buying power to allocate for auto-trading (1–100)
+  reservePct: 0,           // % of buying power always kept untouched (applied before capital %)
   mcpUrl: "http://localhost:8000",
   mcpEnabled: true,
+  aiModel: "o4-mini",
 };
-
-const SCAN_INTERVALS = [5, 10, 15, 30, 60, 120];
 
 const CATEGORIES = ["All", "Equity", "ETF", "Crypto", "Forex", "Commodity", "Europe", "Asia"];
 
@@ -51,13 +55,11 @@ export default function App() {
 
 function AppInner({ session, onLogout }) {
   const [results, setResults] = useState([]);
-  const [scanning, setScanning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [progressLabel, setProgressLabel] = useState("");
   const [toasts, setToasts] = useState([]);
   const [selected, setSelected] = useState(null);
   const [deepDive, setDeepDive] = useState(null);
   const [deepLoading, setDeepLoading] = useState(false);
+  const deepDiveCacheRef = useRef(new Map()); // symbol → { data, ts }
   const [sortBy, setSortBy] = useState("score");
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterSignal, setFilterSignal] = useState("All");
@@ -69,19 +71,54 @@ function AppInner({ session, onLogout }) {
     } catch {}
     return DEFAULT_SETTINGS;
   });
-  const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history" | "portfolio"
-  const [history, setHistory] = useState([]);
+  const [activeTab, setActiveTab] = useState("scan"); // "scan" | "history" | "portfolio" | "logs"
+  const [history, setHistory]   = useState([]);
+  const [trades, setTrades]     = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState(null);
-  const { fetchHistory } = useHistory();
-  const [nextScanIn, setNextScanIn] = useState(null); // seconds until next auto-scan
+  const [historyError, setHistoryError]     = useState(null);
+  const { fetchHistory, fetchTrades } = useHistory(session.key);
   const [mcpStatus, setMcpStatus] = useState("disconnected"); // "disconnected" | "connecting" | "connected"
-  const abortRef = useRef(false);
+  const [buyingPower, setBuyingPower] = useState(null); // updated after each account fetch
+  const [lastScanTime, setLastScanTime] = useState(null);
+  const [daemonActive, setDaemonActive] = useState(false);
+  const [scanProgress, setScanProgressState] = useState(null);
+  const [heldSymbols, setHeldSymbols] = useState(new Set());
+  const [theme, setTheme] = useState(() => getTheme());
+
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const switchTheme = (id) => { applyTheme(id); setTheme(id); setShowThemePicker(false); };
+  useEffect(() => {
+    if (!showThemePicker) return;
+    const close = () => setShowThemePicker(false);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [showThemePicker]);
+
+  // Load persisted results + last scan time + daemon status on mount
+  // Also pull daemon-config.json so UI stays in sync with daemon settings
+  useEffect(() => {
+    loadScanResults(session.key)
+      .then(rows => { if (rows.length) setResults(rows); })
+      .catch(() => {});
+    loadScanRuns(session.key, 1)
+      .then(runs => { if (runs[0]) setLastScanTime(new Date(runs[0].timestamp)); })
+      .catch(() => {});
+    isDaemonAlive().then(setDaemonActive).catch(() => {});
+    // Sync settings from daemon-config.json → UI (daemon is source of truth for interval etc.)
+    fetch('/api/sync-daemon-config')
+      .then(r => r.ok ? r.json() : null)
+      .then(daemonSettings => {
+        if (daemonSettings && Object.keys(daemonSettings).length > 0) {
+          setNotifSettings(prev => {
+            const merged = { ...prev, ...daemonSettings };
+            try { localStorage.setItem(getUserSettingsKey(session.key), JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
   const toastId = useRef(0);
-  const autoScanTimer = useRef(null);
-  const countdownTimer = useRef(null);
-  const startScanRef = useRef(null);       // always points to latest startScan (avoids stale closure in timer)
-  const circuitBreaker = useRef({ failures: 0, tripped: false }); // stops auto-trade after 3 consecutive failures
 
   const settingsKey = getUserSettingsKey(session.key);
 
@@ -105,49 +142,69 @@ function AppInner({ session, onLogout }) {
       .catch(() => setMcpStatus("disconnected"));
   }, [notifSettings.mcpEnabled, notifSettings.mcpUrl]);
 
-  // Fetch history when tab is opened
+  // Fetch scan history + trades when history tab is opened
   useEffect(() => {
     if (activeTab !== "history") return;
     setHistoryLoading(true);
     setHistoryError(null);
-    fetchHistory()
-      .then(data => setHistory(Array.isArray(data) ? data : []))
+    Promise.all([fetchHistory(), fetchTrades()])
+      .then(([runs, tradeList]) => {
+        setHistory(Array.isArray(runs) ? runs : []);
+        setTrades(Array.isArray(tradeList) ? tradeList : []);
+      })
       .catch(e => setHistoryError(e.message))
       .finally(() => setHistoryLoading(false));
   }, [activeTab]);
 
-  // Auto-scan scheduler — uses ref to always call the latest startScan (fixes stale closure)
+  // Auto-scan is daemon-only — browser never auto-scans
+
+  // Held positions — refreshed every 30s independently of scan polling
+  // Never clears on failure so the badge doesn't flicker during fast scan polls
   useEffect(() => {
-    clearTimeout(autoScanTimer.current);
-    clearInterval(countdownTimer.current);
-    setNextScanIn(null);
+    const normalizeSymbol = s => s.length > 3 && !s.includes("/") && s.endsWith("USD")
+      ? s.slice(0, -3) + "/USD" : s;
 
-    if (!notifSettings.autoScanEnabled) return;
-
-    const intervalMs = notifSettings.autoScanInterval * 60 * 1000;
-
-    const scheduleNext = () => {
-      let secondsLeft = notifSettings.autoScanInterval * 60;
-      setNextScanIn(secondsLeft);
-      countdownTimer.current = setInterval(() => {
-        secondsLeft -= 1;
-        setNextScanIn(secondsLeft);
-      }, 1000);
-
-      autoScanTimer.current = setTimeout(() => {
-        clearInterval(countdownTimer.current);
-        startScanRef.current?.(); // always uses latest startScan
-        scheduleNext();
-      }, intervalMs);
+    const refresh = () => {
+      if (!notifSettings.alpacaKey || !notifSettings.alpacaSecret) return;
+      getPositions(notifSettings)
+        .then(pos => {
+          if (Array.isArray(pos) && pos.length >= 0)
+            setHeldSymbols(new Set(pos.map(p => normalizeSymbol(p.symbol))));
+        })
+        .catch(() => {}); // keep last known Set on error
     };
 
-    scheduleNext();
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => clearInterval(id);
+  }, [notifSettings.alpacaKey, notifSettings.alpacaSecret]);
 
-    return () => {
-      clearTimeout(autoScanTimer.current);
-      clearInterval(countdownTimer.current);
+  // Adaptive polling — 3s while daemon is scanning, 60s while idle
+  useEffect(() => {
+    let timerId;
+    const poll = async () => {
+      let prog = null;
+      try { prog = await getScanProgress(); setScanProgressState(prog); } catch {}
+
+      try {
+        const rows = await loadScanResults(session.key);
+        if (rows.length) setResults(rows);
+      } catch {}
+
+      if (prog?.status !== 'scanning') {
+        try {
+          const runs = await loadScanRuns(session.key, 1);
+          if (runs[0]) setLastScanTime(new Date(runs[0].timestamp));
+        } catch {}
+      }
+
+      isDaemonAlive().then(setDaemonActive).catch(() => {});
+
+      timerId = setTimeout(poll, prog?.status === 'scanning' ? 3_000 : 60_000);
     };
-  }, [notifSettings.autoScanEnabled, notifSettings.autoScanInterval]);
+    poll();
+    return () => clearTimeout(timerId);
+  }, []);
 
   const addToast = useCallback((msg, type = "insight") => {
     const id = ++toastId.current;
@@ -157,211 +214,21 @@ function AppInner({ session, onLogout }) {
 
   const removeToast = id => setToasts(t => t.filter(x => x.id !== id));
 
-  const startScan = async () => {
-    if (notifSettings.browserEnabled && Notification.permission !== "granted") {
-      await Notification.requestPermission();
-    }
-    abortRef.current = false;
-    circuitBreaker.current = { failures: 0, tripped: false }; // reset circuit breaker each scan
-    setScanning(true);
-    setProgress(0);
-    setResults([]);
 
-    // Step 1: gather market data in parallel (Finnhub + Alpaca + MCP crypto)
-    setProgressLabel("Gathering market data from all sources...");
-    let allSymbols = [];
-    try {
-      allSymbols = await fetchAllMarketData(notifSettings);
-    } catch (e) {
-      setProgressLabel(`Feed error: ${e.message}`);
-      setScanning(false);
-      return;
-    }
-
-    if (!allSymbols.length) {
-      setProgressLabel("No market data returned. Check your API keys.");
-      setScanning(false);
-      return;
-    }
-
-    // Step 2: fetch account state — buying power + full position map for GPT context
-    let buyingPower = null;
-    let currentPositions = new Map(); // symbol → { qty, avgPrice, marketValue }
-
-    if (notifSettings.alpacaKey && notifSettings.alpacaSecret) {
-      try {
-        const [account, positions] = await Promise.all([
-          getAccount(notifSettings),
-          getPositions(notifSettings),
-        ]);
-        const rawBuyingPower = parseFloat(account.buying_power || account.cash || 0);
-        const capPct = (notifSettings.tradingCapitalPct ?? 100) / 100;
-        buyingPower = rawBuyingPower * capPct;
-        const source = account._source === "mcp" ? " (via MCP)" : " (via REST)";
-        if (rawBuyingPower > 0 && capPct < 1) {
-          console.log(`Buying power: $${rawBuyingPower.toFixed(0)} total · using $${buyingPower.toFixed(0)} (${notifSettings.tradingCapitalPct}%)${source}`);
-        }
-        if (Array.isArray(positions)) {
-          for (const p of positions) {
-            currentPositions.set(p.symbol, {
-              qty:         parseFloat(p.qty || 0),
-              avgPrice:    parseFloat(p.avg_entry_price || 0),
-              marketValue: parseFloat(p.market_value || 0),
-            });
-          }
-        }
-      } catch {
-        // Non-fatal — continue without account data
-      }
-    }
-
-    // Builds a concise portfolio summary for GPT — called before each symbol analysis
-    const buildPortfolioContext = (positions, bp) => {
-      const totalInvested = [...positions.values()].reduce((s, p) => s + p.marketValue, 0);
-      const header = `Buying power: $${bp?.toFixed(0) ?? "unknown"} | Total invested: $${totalInvested.toFixed(0)}`;
-      if (!positions.size) return header;
-      const holdings = [...positions.entries()]
-        .map(([sym, p]) => `${sym}: ${p.qty.toFixed(4)} shares @ avg $${p.avgPrice.toFixed(2)} (value $${p.marketValue.toFixed(0)})`)
-        .join("; ");
-      return `${header}\nHoldings: ${holdings}`;
-    };
-
-    // Step 3: separate cached from uncached
-    const toAnalyze = [];
-    const cachedResults = [];
-    for (const sym of allSymbols) {
-      const hit = getCached(sym.symbol, session.key);
-      if (hit) {
-        cachedResults.push({ ...hit, price: sym.price, change_pct: sym.change_pct });
-      } else {
-        toAnalyze.push(sym);
-      }
-    }
-
-    if (cachedResults.length) setResults(cachedResults);
-    setProgressLabel(`Found ${allSymbols.length} symbols — analyzing ${toAnalyze.length} new...`);
-
-    // Step 4: GPT analysis + auto-trade
-    let remainingBuyingPower = buyingPower;
-    for (let i = 0; i < toAnalyze.length; i++) {
-      if (abortRef.current) break;
-      const sym = toAnalyze[i];
-      setProgressLabel(`Analyzing ${sym.symbol} (${i + 1}/${toAnalyze.length})...`);
-      try {
-        const bars = await getMarketBars(sym.symbol, sym.assetClass);
-        // Rebuild portfolio context before every GPT call so it reflects orders placed this scan
-        const portfolioContext = buildPortfolioContext(currentPositions, remainingBuyingPower);
-        const r = await analyzeSymbol({ ...sym, bars, portfolioContext });
-        setCache(sym.symbol, r, session.key);
-        setResults(prev => [...prev.filter(x => x.symbol !== r.symbol), r]);
-        await sendAlerts(r, notifSettings);
-
-        const meetsConvictionForAlert = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
-        if (r.signal === "BUY" && r.score >= notifSettings.minScore && meetsConvictionForAlert) {
-          addToast(`${r.symbol} [${r.assetClass}] — Score ${r.score} | ${r.conviction} conviction | ${r.investor_thesis?.slice(0, 80)}`, "alert");
-        }
-
-        // Auto-trade — always explain why an order was or wasn't placed for BUY signals
-        if (r.signal === "BUY") {
-          if (!notifSettings.autoTradeEnabled) {
-            addToast(`ℹ ${r.symbol} BUY signal — auto-trade is off (enable in Settings)`, "insight");
-          } else if (!notifSettings.alpacaKey || !notifSettings.alpacaSecret) {
-            addToast(`ℹ ${r.symbol} BUY signal — no Alpaca API keys configured`, "insight");
-          }
-        }
-
-        if (notifSettings.autoTradeEnabled && notifSettings.alpacaKey && notifSettings.alpacaSecret) {
-          const supported = isAlpacaSupported(r.assetClass);
-          const targetNotional = (notifSettings.walletSize || 0) * (r.allocation_pct / 100);
-          const existingPosition = currentPositions.get(r.symbol);
-          const alreadyInvested = existingPosition?.marketValue ?? 0;
-          // Only buy the difference between target allocation and what we already hold
-          const notional = Math.max(0, targetNotional - alreadyInvested);
-          const meetsScore = r.score >= notifSettings.minScore;
-          const meetsConviction = notifSettings.minConviction === "ANY" || r.conviction === "HIGH";
-
-          if (r.signal === "BUY") {
-            if (circuitBreaker.current.tripped) {
-              addToast(`⛔ ${r.symbol} BUY skipped — circuit breaker tripped (3 consecutive failures). Check your Alpaca API.`, "alert");
-            } else if (!supported) {
-              addToast(`⚡ ${r.symbol} BUY skipped — ${r.assetClass} assets not supported on Alpaca paper/live trading`, "insight");
-            } else if (!meetsScore) {
-              addToast(`⚡ ${r.symbol} BUY skipped — score ${r.score} below minimum ${notifSettings.minScore}`, "insight");
-            } else if (!meetsConviction) {
-              addToast(`⚡ ${r.symbol} BUY skipped — conviction is ${r.conviction}, threshold requires HIGH`, "insight");
-            } else if (alreadyInvested >= targetNotional * 0.9) {
-              addToast(`⚡ ${r.symbol} BUY skipped — already holding $${alreadyInvested.toFixed(0)} of $${targetNotional.toFixed(0)} target (≥90% full)`, "insight");
-            } else if (notional < 1) {
-              addToast(`⚡ ${r.symbol} BUY skipped — wallet size not set or GPT allocation (${r.allocation_pct}%) too small`, "insight");
-            } else if (remainingBuyingPower !== null && notional > remainingBuyingPower) {
-              addToast(`⚡ ${r.symbol} BUY skipped — need $${notional.toFixed(0)} but only $${remainingBuyingPower.toFixed(0)} buying power remaining (${notifSettings.tradingCapitalPct ?? 100}% cap)`, "insight");
-            } else {
-              try {
-                const useBracket = notifSettings.bracketOrdersEnabled && r.stop && r.target && !r._bracketInvalid;
-                await placeOrder(r.symbol, "buy", notional, { ...notifSettings, _assetClass: r.assetClass }, { stopPrice: r.stop, takeProfitPrice: r.target, price: r.price });
-                circuitBreaker.current.failures = 0;
-                if (remainingBuyingPower !== null) remainingBuyingPower -= notional;
-                // Update live position map so subsequent GPT calls know we now hold this
-                const newQty = (existingPosition?.qty ?? 0) + (r.price ? notional / r.price : 0);
-                currentPositions.set(r.symbol, {
-                  qty: newQty,
-                  avgPrice: r.price ?? existingPosition?.avgPrice ?? 0,
-                  marketValue: alreadyInvested + notional,
-                });
-                const existingNote = alreadyInvested > 0 ? ` (adding to existing $${alreadyInvested.toFixed(0)} position)` : "";
-                const bracketNote = useBracket
-                  ? ` · SL $${Number(r.stop).toFixed(2)} / TP $${Number(r.target).toFixed(2)}`
-                  : r._bracketInvalid ? " · (bracket skipped — invalid R/R)" : "";
-                addToast(`🛒 Auto-bought ${r.symbol} · $${notional.toFixed(0)}${existingNote}${bracketNote}`, "insight");
-                await sendOrderFill(notifSettings, { symbol: r.symbol, side: "buy", notional, stop: r.stop, target: r.target, bracket: useBracket });
-              } catch (e) {
-                circuitBreaker.current.failures++;
-                if (circuitBreaker.current.failures >= 3) {
-                  circuitBreaker.current.tripped = true;
-                  addToast(`⛔ Circuit breaker tripped — auto-trade paused for rest of scan`, "alert");
-                }
-                addToast(`⚠ Order failed for ${r.symbol}: ${e.message}`, "alert");
-              }
-            }
-          } else if (r.signal === "SELL" && supported) {
-            try {
-              await closePosition(r.symbol, notifSettings);
-              currentPositions.delete(r.symbol); // remove from live map
-              addToast(`📤 Auto-closed position in ${r.symbol}`, "insight");
-              await sendOrderFill(notifSettings, { symbol: r.symbol, side: "sell", notional: alreadyInvested });
-            } catch {
-              // No position to close — silently ignore
-            }
-          }
-        }
-      } catch (e) {
-        console.error(sym.symbol, e.message);
-      }
-      setProgress(Math.round(((i + 1) / toAnalyze.length) * 100));
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    // Save scan to local history
-    setResults(prev => {
-      saveHistory(prev, notifSettings);
-      return prev;
-    });
-
-    setProgressLabel(`Scan complete — ${allSymbols.length} symbols, ${toAnalyze.length} analyzed, ${cachedResults.length} from cache`);
-    setScanning(false);
-  };
-
-  // Keep ref always pointing to latest startScan (fixes stale closure in auto-scan timer)
-  startScanRef.current = startScan;
-
-  const stopScan = () => { abortRef.current = true; setScanning(false); setProgressLabel("Stopped"); };
-
+  const DEEP_DIVE_TTL = 15 * 60 * 1000; // 15-min cache — saves GPT cost on repeated clicks
   const openDeepDive = async (sym) => {
     setSelected(sym);
+    const cached = deepDiveCacheRef.current.get(sym.symbol);
+    if (cached && Date.now() - cached.ts < DEEP_DIVE_TTL && !cached.error) {
+      setDeepDive(cached.data);
+      setDeepLoading(false);
+      return;
+    }
     setDeepDive(null);
     setDeepLoading(true);
     try {
-      const d = await deepDiveSymbol(sym);
+      const d = await deepDiveSymbol(sym, notifSettings.aiModel);
+      deepDiveCacheRef.current.set(sym.symbol, { data: d, ts: Date.now() });
       setDeepDive(d);
     } catch (e) {
       setDeepDive({ error: e.message });
@@ -378,6 +245,7 @@ function AppInner({ session, onLogout }) {
       if (sortBy === "rr") return b.risk_reward - a.risk_reward;
       if (sortBy === "momentum") return b.momentum - a.momentum;
       if (sortBy === "conviction") return (convictionOrder[a.conviction] ?? 2) - (convictionOrder[b.conviction] ?? 2);
+      if (sortBy === "held") return (heldSymbols.has(b.symbol) ? 1 : 0) - (heldSymbols.has(a.symbol) ? 1 : 0);
       return 0;
     });
 
@@ -392,7 +260,7 @@ function AppInner({ session, onLogout }) {
         @keyframes glow { 0%,100%{box-shadow:0 0 8px rgba(0,212,170,0.4)} 50%{box-shadow:0 0 20px rgba(0,212,170,0.8)} }
         @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         * { box-sizing:border-box; margin:0; padding:0 }
-        body { background:#06060a }
+        body { background: var(--c-bg) }
         ::-webkit-scrollbar { width:4px }
         ::-webkit-scrollbar-track { background:transparent }
         ::-webkit-scrollbar-thumb { background:linear-gradient(180deg,#00d4aa44,#00b4d844); border-radius:4px }
@@ -407,8 +275,8 @@ function AppInner({ session, onLogout }) {
 
       {/* Header */}
       <div style={{
-        background: "linear-gradient(180deg, #0f0f1e 0%, #0d0d16 100%)",
-        borderBottom: "1px solid #1c1c2e",
+        background: COLORS.headerGrad,
+        borderBottom: `1px solid ${COLORS.border}`,
         padding: "0 28px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
         position: "sticky", top: 0, zIndex: 100, height: 58,
@@ -420,8 +288,8 @@ function AppInner({ session, onLogout }) {
             width: 32, height: 32, borderRadius: 8,
             background: "linear-gradient(135deg, #00d4aa, #00b4d8)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16, boxShadow: "0 0 16px rgba(0,212,170,0.4)",
-          }}>📡</div>
+            boxShadow: "0 0 16px rgba(0,212,170,0.4)",
+          }}><Radio size={16} color="#000" /></div>
           <div>
             <div style={{ fontWeight: 800, fontSize: 15, background: "linear-gradient(135deg, #00d4aa, #00b4d8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
               FinAnalyzer
@@ -436,34 +304,40 @@ function AppInner({ session, onLogout }) {
           <div style={{ display:"flex", alignItems:"center", gap:5 }}>
             <div style={{
               width:7, height:7, borderRadius:"50%",
-              background: mcpStatus === "connected" ? COLORS.green : mcpStatus === "connecting" ? COLORS.gold : "#3a3a5a",
+              background: mcpStatus === "connected" ? COLORS.green : mcpStatus === "connecting" ? COLORS.gold : COLORS.border,
               boxShadow: mcpStatus === "connected" ? `0 0 6px ${COLORS.green}` : "none",
               animation: mcpStatus === "connecting" ? "pulse 1s infinite" : "none",
             }} />
-            <span style={{ fontSize:10, color: mcpStatus === "connected" ? COLORS.green : COLORS.muted, fontWeight:600 }}>
+            <span style={{ fontSize:10, color: mcpStatus === "connected" ? COLORS.green : COLORS.muted, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}>
+              {mcpStatus === "connected" ? <Wifi size={11} /> : <WifiOff size={11} />}
               MCP {mcpStatus === "connected" ? "Connected" : mcpStatus === "connecting" ? "Connecting..." : "Off"}
             </span>
           </div>
-          {scanning && (
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div style={{ width:10, height:10, borderRadius:"50%", background:COLORS.accent, animation:"pulse 1s infinite", boxShadow:`0 0 8px ${COLORS.accent}` }} />
-              <div style={{ width:160, height:3, background:COLORS.border, borderRadius:4, overflow:"hidden" }}>
-                <div style={{ width:`${progress}%`, height:"100%", background:"linear-gradient(90deg,#00d4aa,#00b4d8)", borderRadius:4, transition:"width 0.4s ease", boxShadow:"0 0 8px rgba(0,212,170,0.6)" }} />
-              </div>
-              <span style={{ color:COLORS.gold, fontSize:11, fontWeight:600 }}>{progress}% · {progressLabel}</span>
-            </div>
-          )}
-          {!scanning && results.length > 0 && (
+          {results.length > 0 && (
             <div style={{ display:"flex", alignItems:"center", gap:6 }}>
               <div style={{ width:6, height:6, borderRadius:"50%", background:COLORS.accent }} />
               <span style={{ color:COLORS.muted, fontSize:11 }}>{results.length} assets analyzed</span>
             </div>
           )}
-          {!scanning && nextScanIn !== null && (
-            <div style={{ background:"rgba(240,180,41,0.08)", border:"1px solid rgba(240,180,41,0.2)", borderRadius:20, padding:"4px 12px" }}>
-              <span style={{ color:COLORS.gold, fontSize:11, fontWeight:600 }}>
-                ⏱ {Math.floor(nextScanIn / 60)}:{String(nextScanIn % 60).padStart(2, "0")}
-              </span>
+          {daemonActive && (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ background:"rgba(240,180,41,0.08)", border:"1px solid rgba(240,180,41,0.2)", borderRadius:20, padding:"4px 12px", display:"flex", alignItems:"center", gap:6 }}>
+                <Cpu size={12} color={COLORS.gold} style={{ animation:"pulse 1s infinite" }} />
+                <span style={{ color:COLORS.gold, fontSize:11, fontWeight:600 }}>
+                  {scanProgress?.status === 'scanning'
+                    ? `Scanning ${scanProgress.current_sym ?? '…'} [${scanProgress.scanned_count}/${scanProgress.total_count}]`
+                    : 'Daemon active'}
+                </span>
+              </div>
+              {scanProgress?.status === 'scanning' && scanProgress.total_count > 0 && (
+                <div style={{ width:80, height:3, background:COLORS.border, borderRadius:2, overflow:'hidden' }}>
+                  <div style={{
+                    height:'100%', borderRadius:2, background:COLORS.gold,
+                    width:`${Math.round((scanProgress.scanned_count / scanProgress.total_count) * 100)}%`,
+                    transition:'width 0.5s ease',
+                  }} />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -490,38 +364,56 @@ function AppInner({ session, onLogout }) {
               onMouseLeave={e => { e.currentTarget.style.borderColor=COLORS.border; e.currentTarget.style.color=COLORS.muted; }}
             >Sign out</button>
           </div>
+          {/* Theme picker */}
+          <div style={{ position: "relative" }}>
+            <button onClick={e => { e.stopPropagation(); setShowThemePicker(s => !s); }} title="Switch theme" style={{
+              width: 34, height: 34, cursor: "pointer", fontSize: 16,
+              background: COLORS.overlay, border: `1px solid ${COLORS.border}`,
+              borderRadius: 20, color: COLORS.muted, transition: "all 0.2s",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.color = COLORS.accent; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.muted; }}
+            >{THEMES[theme]?.dark === false ? <Sun size={15} /> : <Moon size={15} />}</button>
+            {showThemePicker && (
+              <div style={{
+                position: "absolute", right: 0, top: 42, zIndex: 200,
+                background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+                borderRadius: 10, padding: 6, minWidth: 170,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+              }}>
+                {Object.entries(THEMES).map(([id, t]) => (
+                  <button key={id} onClick={() => switchTheme(id)} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    width: "100%", padding: "7px 10px", border: "none", cursor: "pointer",
+                    background: theme === id ? `${COLORS.accent}18` : "transparent",
+                    borderRadius: 6, color: theme === id ? COLORS.accent : COLORS.text,
+                    fontSize: 12, fontWeight: theme === id ? 700 : 400, textAlign: "left",
+                  }}>
+                    <span style={{ fontSize: 10 }}>{t.dark === false ? "☀️" : "🌙"}</span>
+                    {t.label}
+                    {theme === id && <span style={{ marginLeft: "auto", fontSize: 10 }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button onClick={() => setShowSettings(s => !s)} style={{
             padding: "7px 16px", cursor: "pointer", fontSize: 12, fontWeight: 600,
-            background: "rgba(255,255,255,0.04)", border: "1px solid #1c1c2e",
+            background: COLORS.overlay, border: `1px solid ${COLORS.border}`,
             borderRadius: 20, color: COLORS.muted, transition: "all 0.2s",
           }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.color = COLORS.accent; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "#1c1c2e"; e.currentTarget.style.color = COLORS.muted; }}
-          >⚙ Settings</button>
-          {!scanning
-            ? <button onClick={startScan} style={{
-                padding: "8px 22px", border: "none", borderRadius: 20,
-                fontWeight: 700, fontSize: 13, cursor: "pointer",
-                background: "linear-gradient(135deg, #00d4aa, #00b4d8)",
-                color: "#000", boxShadow: "0 4px 16px rgba(0,212,170,0.35)",
-                transition: "all 0.2s",
-              }}
-                onMouseEnter={e => e.currentTarget.style.boxShadow = "0 6px 24px rgba(0,212,170,0.6)"}
-                onMouseLeave={e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,212,170,0.35)"}
-              >▶ Scan Markets</button>
-            : <button onClick={stopScan} style={{
-                padding: "8px 22px", border: "none", borderRadius: 20,
-                fontWeight: 700, fontSize: 13, cursor: "pointer",
-                background: "linear-gradient(135deg, #ff4d6d, #e11d48)",
-                color: "#fff", boxShadow: "0 4px 16px rgba(255,77,109,0.35)",
-              }}>■ Stop</button>
-          }
+            onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.muted; }}
+          ><Settings size={13} style={{ marginRight:5, verticalAlign:"middle" }} />Settings</button>
         </div>
       </div>
 
+      <TickerTape results={results} settings={notifSettings} />
+
       {/* Tab bar */}
       <div style={{ background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, padding: "0 28px", display: "flex", gap: 2 }}>
-        {[["scan", "📡 Live Scan"], ["history", "🕓 History"], ["portfolio", "💼 Portfolio"]].map(([tab, label]) => (
+        {[["scan", <><Activity size={12} style={{marginRight:5,verticalAlign:"middle"}}/>Signals</>], ["history", <><Clock size={12} style={{marginRight:5,verticalAlign:"middle"}}/>History</>], ["portfolio", <><Briefcase size={12} style={{marginRight:5,verticalAlign:"middle"}}/>Portfolio</>], ["logs", <><Terminal size={12} style={{marginRight:5,verticalAlign:"middle"}}/>Daemon Log</>]].map(([tab, label]) => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             padding: "12px 20px", background: "none", border: "none", cursor: "pointer",
             fontSize: 12, fontWeight: 600, letterSpacing: 0.3,
@@ -532,12 +424,20 @@ function AppInner({ session, onLogout }) {
         ))}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 390px", height:"calc(100vh - 90px)" }}>
+      <MarketStatusBar settings={notifSettings} />
+
+      {activeTab === "logs" ? (
+        <div style={{ height:"calc(100vh - 144px)" }}>
+          <DaemonLogPanel />
+        </div>
+      ) : null}
+
+      <div style={{ display: activeTab === "logs" ? "none" : "grid", gridTemplateColumns: activeTab === "scan" ? "1fr 390px" : "1fr", height:"calc(100vh - 144px)" }}>
 
         {/* Left panel */}
         <div style={{ overflowY:"auto", padding:20 }}>
         {activeTab === "history" ? (
-          <HistoryPanel history={history} loading={historyLoading} error={historyError} />
+          <HistoryPanel history={history} trades={trades} loading={historyLoading} error={historyError} settings={notifSettings} />
         ) : activeTab === "portfolio" ? (
           <PortfolioPanel settings={notifSettings} mcpStatus={mcpStatus} />
         ) : (<>
@@ -552,7 +452,7 @@ function AppInner({ session, onLogout }) {
               <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10 }}>
                 {topPicks.map(r => (
                   <div key={r.symbol} onClick={() => openDeepDive(r)} style={{
-                    background: "linear-gradient(135deg, #141424, #0f0f1e)",
+                    background: COLORS.cardGrad,
                     border: "1px solid rgba(0,212,170,0.2)",
                     borderRadius: 12, padding: 14, cursor: "pointer",
                     boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
@@ -561,7 +461,16 @@ function AppInner({ session, onLogout }) {
                     onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(0,212,170,0.5)"; e.currentTarget.style.boxShadow = "0 8px 32px rgba(0,212,170,0.15)"; }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(0,212,170,0.2)"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.4)"; }}
                   >
-                    <div style={{ fontWeight:900, fontSize:14, color:COLORS.accent, letterSpacing:-0.3 }}>{r.symbol}</div>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <div style={{ fontWeight:900, fontSize:14, color:COLORS.accent, letterSpacing:-0.3 }}>{r.symbol}</div>
+                      <span
+                        onClick={e => { e.stopPropagation(); openChartWindow(r.symbol, { assetClass: r.assetClass, entry: r.entry, stop: r.stop, target: r.target, price: r.price }); }}
+                        title="Open chart"
+                        style={{ fontSize:12, color:COLORS.muted, cursor:"pointer" }}
+                        onMouseEnter={e => e.currentTarget.style.color = COLORS.accent}
+                        onMouseLeave={e => e.currentTarget.style.color = COLORS.muted}
+                      ><ExternalLink size={11} /></span>
+                    </div>
                     <div style={{ fontSize:9, color:COLORS.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:0.5 }}>{r.assetClass}</div>
                     <ScoreBadge score={r.score} />
                     <div style={{ marginTop:6 }}><Sparkline data={r.prices} /></div>
@@ -570,6 +479,20 @@ function AppInner({ session, onLogout }) {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Last scan timestamp */}
+          {lastScanTime && (
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+              <div style={{ width:6, height:6, borderRadius:"50%", background: COLORS.accent }} />
+              <span style={{ fontSize:10, color: COLORS.muted }}>
+                Last scan:{" "}
+                <span style={{ color: COLORS.text, fontWeight:600 }}>
+                  {lastScanTime.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" })}
+                </span>
+                <span style={{ color:COLORS.muted, marginLeft:6 }}>· {results.length} symbols</span>
+              </span>
             </div>
           )}
 
@@ -594,7 +517,7 @@ function AppInner({ session, onLogout }) {
             ))}
             <div style={{ marginLeft:"auto", display:"flex", gap:5, alignItems:"center" }}>
               <span style={{ color:COLORS.muted, fontSize:10 }}>Sort:</span>
-              {[["score","Score"],["conviction","Conviction"],["rr","R/R"],["momentum","Mom"]].map(([k, l]) => (
+              {[["score","Score"],["conviction","Conviction"],["rr","R/R"],["momentum","Mom"],["held","Held"]].map(([k, l]) => (
                 <button key={k} onClick={() => setSortBy(k)} style={{
                   padding:"4px 8px", borderRadius:12, border:`1px solid ${sortBy === k ? COLORS.accent : COLORS.border}`,
                   background: sortBy === k ? "rgba(0,212,170,0.1)" : "transparent",
@@ -607,27 +530,28 @@ function AppInner({ session, onLogout }) {
           {/* Results table */}
           {filtered.length === 0 ? (
             <div style={{
-              background: "linear-gradient(135deg, #111120, #0d0d1a)",
+              background: COLORS.cardGrad,
               border: `1px solid ${COLORS.border}`, borderRadius: 14,
               padding: 60, textAlign: "center",
               boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
             }}>
-              <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📡</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#404060", marginBottom: 8 }}>{scanning ? progressLabel : "No results yet."}</div>
-              <div style={{ fontSize: 12, color: "#2a2a42" }}>{!scanning && "Click Scan Markets to analyze top movers across US, Europe, Asia, Crypto, Forex & Commodities."}</div>
+              <div style={{ marginBottom: 16, opacity: 0.3, display:"flex", justifyContent:"center" }}><Radio size={48} color={COLORS.muted} /></div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.muted, marginBottom: 8 }}>No results yet.</div>
+              <div style={{ fontSize: 12, color: COLORS.muted }}>Waiting for the daemon to scan markets. Check daemon-config.json to configure the scan schedule.</div>
             </div>
           ) : (
             <div style={{
-              background: "linear-gradient(180deg, #111120, #0d0d1a)",
+              background: COLORS.cardGrad,
               border: `1px solid ${COLORS.border}`, borderRadius: 14,
               overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
             }}>
               {/* Table header */}
-              <div style={{ display:"grid", gridTemplateColumns:"44px 80px 70px 90px 74px 60px 70px 60px 70px 1fr", padding:"10px 16px", borderBottom:`1px solid ${COLORS.border}`, fontSize:9, color:COLORS.muted, textTransform:"uppercase", letterSpacing:1.2, fontWeight:700, background:"rgba(0,0,0,0.2)" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"44px 80px 70px 90px 74px 60px 70px 60px 70px 1fr", padding:"10px 16px", borderBottom:`1px solid ${COLORS.border}`, fontSize:9, color:COLORS.muted, textTransform:"uppercase", letterSpacing:1.2, fontWeight:700, background:COLORS.overlay }}>
                 <div/><div>Symbol</div><div>Class</div><div>Price</div><div>Signal</div><div>Score</div><div>Conv.</div><div>R/R</div><div>Horizon</div><div>Thesis</div>
               </div>
               {filtered.map((r, idx) => {
                 const isSelected = selected?.symbol === r.symbol;
+                const isHeld = heldSymbols.has(r.symbol);
                 return (
                   <div key={r.symbol + r.market} className="row-animate" onClick={() => openDeepDive(r)}
                     style={{
@@ -642,11 +566,25 @@ function AppInner({ session, onLogout }) {
                     onMouseEnter={e => e.currentTarget.style.background = isSelected ? "linear-gradient(90deg, rgba(0,212,170,0.1), transparent)" : "rgba(255,255,255,0.04)"}
                     onMouseLeave={e => e.currentTarget.style.background = isSelected ? "linear-gradient(90deg, rgba(0,212,170,0.07), transparent)" : idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"}>
                     <div style={{ display:"flex", alignItems:"center" }}><ScoreBadge score={r.score} /></div>
-                    <div style={{ display:"flex", alignItems:"center", fontWeight:800, fontSize:13, color: isSelected ? COLORS.accent : COLORS.text, letterSpacing:-0.2 }}>{r.symbol}</div>
+                    <div style={{ display:"flex", flexDirection:"column", justifyContent:"center", gap:2 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <span style={{ fontWeight:800, fontSize:13, color: isSelected ? COLORS.accent : COLORS.text, letterSpacing:-0.2 }}>{r.symbol}</span>
+                        <span
+                          onClick={e => { e.stopPropagation(); openChartWindow(r.symbol, { assetClass: r.assetClass, entry: r.entry, stop: r.stop, target: r.target, price: r.price }); }}
+                          title="Open chart"
+                          style={{ color:COLORS.muted, cursor:"pointer", lineHeight:1, display:"flex" }}
+                          onMouseEnter={e => e.currentTarget.style.color = COLORS.accent}
+                          onMouseLeave={e => e.currentTarget.style.color = COLORS.muted}
+                        ><ExternalLink size={10} /></span>
+                      </div>
+                      {isHeld && (
+                        <span title="Position held" style={{ fontSize:9, fontWeight:700, color:"#1a1a2e", background:COLORS.accent, borderRadius:3, padding:"1px 4px", lineHeight:1.4, letterSpacing:0.3, alignSelf:"flex-start" }}>HELD</span>
+                      )}
+                    </div>
                     <div style={{ display:"flex", alignItems:"center" }}><AssetClassTag assetClass={r.assetClass} /></div>
                     <div style={{ display:"flex", flexDirection:"column", justifyContent:"center", gap:2 }}>
                       <div style={{ fontSize:13, fontWeight:700 }}>{r.assetClass === "Forex" ? r.price?.toFixed(4) : `$${r.price?.toFixed(2)}`}</div>
-                      <div style={{ fontSize:10, fontWeight:600, color: r.change_pct >= 0 ? COLORS.green : COLORS.red }}>{r.change_pct >= 0 ? "▲" : "▼"} {Math.abs(r.change_pct)?.toFixed(2)}%</div>
+                      <div style={{ fontSize:10, fontWeight:600, color: r.change_pct >= 0 ? COLORS.green : COLORS.red, display:"flex", alignItems:"center", gap:2 }}>{r.change_pct >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />} {Math.abs(r.change_pct)?.toFixed(2)}%</div>
                       <Sparkline data={r.prices} />
                     </div>
                     <div style={{ display:"flex", alignItems:"center" }}><SignalBadge signal={r.signal} /></div>
@@ -664,13 +602,14 @@ function AppInner({ session, onLogout }) {
         </>)}
         </div>
 
-        {/* Deep dive panel */}
-        <div style={{ background:"linear-gradient(180deg, #0d0d16, #0a0a12)", borderLeft:`1px solid ${COLORS.border}`, overflowY:"auto", padding:20 }}>
+        {/* Deep dive panel — scan tab only */}
+        {activeTab === "scan" && <div style={{ background:COLORS.surfaceGrad, borderLeft:`1px solid ${COLORS.border}`, overflowY:"auto", padding:20 }}>
           <DeepDivePanel
             selected={selected}
             deepDive={deepDive}
             deepLoading={deepLoading}
             settings={notifSettings}
+            buyingPower={buyingPower}
             onBuy={async (sym, notional, useBracket) => {
               const opts = useBracket && sym.stop && sym.target && !sym._bracketInvalid
                 ? { stopPrice: sym.stop, takeProfitPrice: sym.target, price: sym.price }
@@ -685,11 +624,11 @@ function AppInner({ session, onLogout }) {
               addToast(`📤 Closed position in ${sym.symbol}`, "insight");
             }}
           />
-        </div>
+        </div>}
       </div>
 
-      <div style={{ position:"fixed", bottom:14, left:"50%", transform:"translateX(-50%)", color:"#3a3a5a", fontSize:10, background:"rgba(13,13,22,0.9)", padding:"4px 16px", borderRadius:20, border:"1px solid #1c1c2e", zIndex:99, backdropFilter:"blur(8px)", letterSpacing:0.5 }}>
-        ⚠ AI-generated analysis only — not financial advice
+      <div style={{ position:"fixed", bottom:14, left:"50%", transform:"translateX(-50%)", color:COLORS.muted, fontSize:10, background:COLORS.surface, padding:"4px 16px", borderRadius:20, border:`1px solid ${COLORS.border}`, zIndex:99, backdropFilter:"blur(8px)", letterSpacing:0.5, display:"flex", alignItems:"center", gap:5 }}>
+        <AlertTriangle size={10} /> AI-generated analysis only — not financial advice
       </div>
     </div>
   );
