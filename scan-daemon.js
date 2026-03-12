@@ -1043,6 +1043,75 @@ async function alertOrder(symbol, side, notional, extra = "") {
   await tgSend(`${emoji} <b>Order: ${side.toUpperCase()} ${symbol}</b>\nAmount: $${Number(notional).toFixed(2)}${extra}`);
 }
 
+async function sendPortfolioDigest() {
+  if (!config.alpacaKey || !config.alpacaSecret || !config.telegramChatId) return;
+  try {
+    const [account, rawPositions] = await Promise.all([
+      alpacaGet("/v2/account"),
+      alpacaGet("/v2/positions"),
+    ]);
+
+    const equity   = parseFloat(account.equity || 0);
+    const lastEq   = parseFloat(account.last_equity || equity);
+    const dayPL    = equity - lastEq;
+    const dayPLPct = lastEq > 0 ? (dayPL / lastEq * 100) : 0;
+    const rawBp    = parseFloat(account.non_marginable_buying_power || account.buying_power || 0);
+    const positions = Array.isArray(rawPositions) ? rawPositions : [];
+
+    const etTime  = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true });
+    const session = getETSession();
+    const plSign  = dayPL >= 0 ? "+" : "";
+    const plEmoji = dayPL >= 0 ? "📈" : "📉";
+
+    let msg = `📊 <b>Portfolio Digest</b> · ${etTime} ET\n`;
+    msg += `🕐 ${session}\n\n`;
+    msg += `💼 Value: <b>$${equity.toLocaleString("en-US", { maximumFractionDigits: 0 })}</b>  |  `;
+    msg += `${plEmoji} Day: <b>${plSign}$${Math.abs(dayPL).toLocaleString("en-US", { maximumFractionDigits: 0 })} (${plSign}${dayPLPct.toFixed(2)}%)</b>\n`;
+    msg += `💵 Cash available: $${rawBp.toLocaleString("en-US", { maximumFractionDigits: 0 })}\n`;
+
+    if (positions.length === 0) {
+      msg += `\n📭 No open positions`;
+    } else {
+      // Sort: biggest winners first
+      const sorted = positions.slice().sort((a, b) =>
+        parseFloat(b.unrealized_pl || 0) - parseFloat(a.unrealized_pl || 0)
+      );
+      msg += `\n<b>Positions (${positions.length})</b>\n`;
+      for (const p of sorted) {
+        const mv      = parseFloat(p.market_value || 0);
+        const upl     = parseFloat(p.unrealized_pl || 0);
+        const uplPct  = parseFloat(p.unrealized_plpc || 0) * 100;
+        const dayPl   = parseFloat(p.unrealized_intraday_pl || 0);
+        const dayPct  = parseFloat(p.unrealized_intraday_plpc || 0) * 100;
+        const price   = parseFloat(p.current_price || 0);
+        const posEmoji = upl >= 0 ? "🟢" : "🔴";
+        const dayStr  = `${dayPl >= 0 ? "+" : ""}${dayPct.toFixed(1)}% today`;
+        const totStr  = `${upl  >= 0 ? "+" : ""}${uplPct.toFixed(1)}% total`;
+        msg += `${posEmoji} <b>${p.symbol}</b> $${price.toFixed(2)} · $${mv.toLocaleString("en-US", { maximumFractionDigits: 0 })} · ${dayStr} · ${totStr}\n`;
+      }
+
+      // Portfolio-level insights
+      const totalMv  = positions.reduce((s, p) => s + parseFloat(p.market_value || 0), 0);
+      const totalUpl = positions.reduce((s, p) => s + parseFloat(p.unrealized_pl || 0), 0);
+      const best     = sorted[0];
+      const worst    = sorted[sorted.length - 1];
+      const bestPct  = parseFloat(best?.unrealized_plpc || 0) * 100;
+      const worstPct = parseFloat(worst?.unrealized_plpc || 0) * 100;
+      msg += `\n📦 Invested: $${totalMv.toLocaleString("en-US", { maximumFractionDigits: 0 })}  |  `;
+      msg += `P&L: ${totalUpl >= 0 ? "+" : ""}$${Math.abs(totalUpl).toLocaleString("en-US", { maximumFractionDigits: 0 })}\n`;
+      if (positions.length > 1) {
+        msg += `🏆 Best: ${best.symbol} (${bestPct >= 0 ? "+" : ""}${bestPct.toFixed(1)}%)  |  `;
+        msg += `⚠️ Worst: ${worst.symbol} (${worstPct >= 0 ? "+" : ""}${worstPct.toFixed(1)}%)`;
+      }
+    }
+
+    await tgSend(msg);
+    console.log(`  📊 Portfolio digest sent (${positions.length} positions)`);
+  } catch (e) {
+    console.error(`[Portfolio digest error] ${e.message}`);
+  }
+}
+
 // ─── Auto-trade ─────────────────────────────────────────────────────────────
 
 // Re-anchor GPT's stop/target to the live Alpaca price at order time.
@@ -1133,6 +1202,8 @@ async function maybeAutoTrade(r, currentPositions, bpBuckets, circuitBreaker, li
       pendingSells.delete(r.symbol);
     }
     if (circuitBreaker.tripped) { console.log(`  ⚡ ${r.symbol}: circuit breaker tripped`); return; }
+    if (dailyHalt) { console.log(`  ⛔ ${r.symbol}: daily loss limit active — BUY skipped`); return; }
+    if (config.maxOpenPositions > 0 && currentPositions.size >= config.maxOpenPositions) { console.log(`  ⚡ ${r.symbol}: max open positions (${config.maxOpenPositions}) reached`); return; }
     if (r.score < effectiveMinScore) { console.log(`  ⚡ ${r.symbol}: score ${r.score} < ${effectiveMinScore} (${isCrypto ? "crypto" : "equity"} threshold)`); return; }
     if (r.conviction !== "HIGH" && effectiveMinConviction === "HIGH") { console.log(`  ⚡ ${r.symbol}: conviction ${r.conviction} below ${isCrypto ? "crypto" : "equity"} threshold`); return; }
     // Fear & Greed gate — block crypto buys in Extreme Greed territory
@@ -1321,9 +1392,14 @@ async function maybeAutoTrade(r, currentPositions, bpBuckets, circuitBreaker, li
         await alertOrder(r.symbol, "buy", notional, `${existingNote}${bracketNote}`);
       }
     } catch (e) {
-      circuitBreaker.failures++;
-      if (circuitBreaker.failures >= 3) { circuitBreaker.tripped = true; console.log("  ⛔ Circuit breaker tripped"); }
-      console.error(`  ⚠ BUY failed ${r.symbol}: ${e.message} | notional=$${notional?.toFixed(2)} price=$${livePrice} score=${r.score} conviction=${r.conviction} bracket=${config.bracketOrdersEnabled}`);
+      const isPDT = e.message?.toLowerCase().includes("pattern day trading");
+      if (isPDT) {
+        console.warn(`  ⚠ BUY skipped ${r.symbol}: PDT protection active — resolve in Alpaca dashboard (switch to cash account or request PDT reset)`);
+      } else {
+        circuitBreaker.failures++;
+        if (circuitBreaker.failures >= 3) { circuitBreaker.tripped = true; console.log("  ⛔ Circuit breaker tripped"); }
+        console.error(`  ⚠ BUY failed ${r.symbol}: ${e.message} | notional=$${notional?.toFixed(2)} price=$${livePrice} score=${r.score} conviction=${r.conviction} bracket=${config.bracketOrdersEnabled}`);
+      }
     }
   } else if (r.signal === "SELL") {
     if (!existingPosition) {
@@ -1595,6 +1671,11 @@ async function getMarketRegime(spyPrice) {
 
 let consecutiveScanFailures = 0;
 
+// ─── Daily loss limit state ──────────────────────────────────────────────────
+let dailyOpenEquity = null;
+let dailyHalt       = false;
+let dailyHaltDate   = null;
+
 // ─── Analysis cache (in-memory, per daemon process) ─────────────────────────
 // Avoids calling GPT when a symbol moved < MIN_MOVE_PCT since last analysis
 
@@ -1669,17 +1750,21 @@ async function runScan() {
         ? Math.min(config.reserveFixed, rawBp)          // fixed dollar reserve (never shrinks)
         : rawBp * ((config.reservePct ?? 0) / 100);     // % reserve (default)
       const usableBp     = Math.max(0, rawBp - reservedAmt);
+      // Apply tradingCapitalPct — deploy only a fraction of usable capital
+      const tradingPct   = Math.min(1, Math.max(0, (config.tradingCapitalPct ?? 100) / 100));
+      const deployableBp = +(usableBp * tradingPct).toFixed(2);
       // Split into equity and crypto buckets
       const cryptoPct    = (config.cryptoCapitalPct ?? 10) / 100;
       buyingPower        = {
-        equity: +(usableBp * (1 - cryptoPct)).toFixed(2),
-        crypto: +(usableBp * cryptoPct).toFixed(2),
-        total:  +usableBp.toFixed(2),
+        equity: +(deployableBp * (1 - cryptoPct)).toFixed(2),
+        crypto: +(deployableBp * cryptoPct).toFixed(2),
+        total:  +deployableBp.toFixed(2),
       };
       const reserveDesc = config.reserveFixed != null && config.reserveFixed > 0
         ? `fixed $${reservedAmt.toFixed(0)}`
         : `${config.reservePct ?? 0}% ($${reservedAmt.toFixed(0)})`;
-      console.log(`  Buying power: $${rawBp.toFixed(0)} total · reserve ${reserveDesc} · usable $${usableBp.toFixed(0)} → equity $${buyingPower.equity.toFixed(0)} (${100 - (config.cryptoCapitalPct ?? 10)}%) · crypto $${buyingPower.crypto.toFixed(0)} (${config.cryptoCapitalPct ?? 10}%)`);
+      const tradingDesc = tradingPct < 1 ? ` · trading ${config.tradingCapitalPct}% ($${deployableBp.toFixed(0)})` : "";
+      console.log(`  Buying power: $${rawBp.toFixed(0)} total · reserve ${reserveDesc} · usable $${usableBp.toFixed(0)}${tradingDesc} → equity $${buyingPower.equity.toFixed(0)} (${100 - (config.cryptoCapitalPct ?? 10)}%) · crypto $${buyingPower.crypto.toFixed(0)} (${config.cryptoCapitalPct ?? 10}%)`);
       if (Array.isArray(positions)) {
         for (const p of positions) {
           currentPositions.set(p.symbol, {
@@ -1696,6 +1781,35 @@ async function runScan() {
       }
     } catch (e) {
       console.warn("  Account fetch failed:", e.message);
+    }
+
+    // ── Daily loss limit check ────────────────────────────────────────────
+    if (config.alpacaKey && config.alpacaSecret && config.dailyLossLimitPct > 0) {
+      try {
+        const account   = await alpacaGet("/v2/account");
+        const equity    = parseFloat(account.equity || 0);
+        const todayStr  = new Date().toISOString().slice(0, 10);
+        if (dailyHaltDate !== todayStr) {
+          dailyOpenEquity = equity;
+          dailyHalt       = false;
+          dailyHaltDate   = todayStr;
+          console.log(`  📊 Daily equity baseline set: $${equity.toFixed(2)}`);
+        }
+        if (!dailyHalt && dailyOpenEquity > 0) {
+          const lossPct = (dailyOpenEquity - equity) / dailyOpenEquity * 100;
+          if (lossPct >= config.dailyLossLimitPct) {
+            dailyHalt = true;
+            console.log(`  ⛔ Daily loss limit reached (−${lossPct.toFixed(2)}% ≥ ${config.dailyLossLimitPct}%) — BUY orders halted for today`);
+          } else if (lossPct > 0) {
+            console.log(`  📊 Daily P&L: −${lossPct.toFixed(2)}% (limit ${config.dailyLossLimitPct}%)`);
+          }
+        }
+        if (dailyHalt) {
+          console.log(`  ⛔ Daily halt active — all BUY signals will be skipped this scan`);
+        }
+      } catch (e) {
+        console.warn("  Daily loss check failed:", e.message);
+      }
     }
   }
 
@@ -2349,6 +2463,12 @@ async function main() {
 
   // Heartbeat every 2 minutes so UI can detect daemon between scans
   setInterval(() => { try { upsertDaemonHeartbeat(process.pid); } catch {} }, 2 * 60 * 1000);
+
+  // Portfolio digest every 30 minutes + once on startup (after a short delay for first scan to populate positions)
+  setTimeout(() => {
+    sendPortfolioDigest().catch(() => {});
+    setInterval(() => sendPortfolioDigest().catch(() => {}), 30 * 60 * 1000);
+  }, 2 * 60 * 1000); // wait 2 min so the first scan finishes before first digest
 
   // Run immediately, then self-schedule — catches errors so daemon never dies between scans
   const schedule = () => {

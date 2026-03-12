@@ -5,9 +5,10 @@ import { getAccount } from "../lib/alpaca.js";
 
 export function SettingsPanel({ settings, onChange, onClose }) {
   const set = (key, val) => onChange({ ...settings, [key]: val });
-  const [alpacaTestMsg, setAlpacaTestMsg] = useState("");
-  const [resetStatus, setResetStatus]     = useState(null); // null | "confirm" | "done" | "error"
-  const [resetOpts, setResetOpts]         = useState({ clearTrades: true, clearHistory: false });
+  const [alpacaTestMsg, setAlpacaTestMsg]           = useState("");
+  const [resetStatus, setResetStatus]               = useState(null); // null | "confirm" | "done" | "error"
+  const [resetOpts, setResetOpts]                   = useState({ clearTrades: true, clearHistory: false });
+  const [liveConfirmPending, setLiveConfirmPending] = useState(false);
 
   const testTelegram = async () => {
     if (!settings.telegramChatId) return alert("Enter your Telegram Chat ID first");
@@ -154,6 +155,18 @@ export function SettingsPanel({ settings, onChange, onClose }) {
         )}
       </div>
 
+      {/* Pre-market scan toggle — daemon only */}
+      <div style={rowStyle}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:600, color:COLORS.text }}>
+            Pre-Market Scan
+            <span style={{ marginLeft:6, fontSize:9, fontWeight:700, color:COLORS.gold, background:"rgba(240,180,41,0.1)", border:"1px solid rgba(240,180,41,0.25)", borderRadius:8, padding:"1px 6px", verticalAlign:"middle" }}>DAEMON ONLY</span>
+          </div>
+          <div style={{ fontSize:11, color:COLORS.muted }}>Scan equities 4:00–9:30 AM ET (analysis only, no trades) — disable to cut GPT costs</div>
+        </div>
+        {toggle(settings.premarketScanEnabled ?? true, "premarketScanEnabled")}
+      </div>
+
       {/* MCP Server */}
       <div style={{ padding: "14px 0", borderBottom: `1px solid ${COLORS.border}` }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>MCP Server</div>
@@ -193,7 +206,14 @@ export function SettingsPanel({ settings, onChange, onClose }) {
           <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 6 }}>Mode</div>
           <div style={{ display: "flex", gap: 6 }}>
             {[["paper", "🧪 Paper"], ["live", "⚡ Live"]].map(([m, label]) => (
-              <button key={m} onClick={() => set("alpacaMode", m)} style={{
+              <button key={m} onClick={() => {
+                if (m === "live" && settings.alpacaMode !== "live") {
+                  setLiveConfirmPending(true);
+                } else {
+                  setLiveConfirmPending(false);
+                  set("alpacaMode", m);
+                }
+              }} style={{
                 padding: "5px 14px", borderRadius: 14, fontSize: 11, fontWeight: 600, cursor: "pointer",
                 border: `1px solid ${settings.alpacaMode === m ? (m === "live" ? COLORS.red : COLORS.gold) : COLORS.border}`,
                 background: settings.alpacaMode === m ? (m === "live" ? "rgba(255,77,109,0.1)" : "rgba(240,180,41,0.1)") : "transparent",
@@ -202,6 +222,22 @@ export function SettingsPanel({ settings, onChange, onClose }) {
               }}>{label}</button>
             ))}
           </div>
+          {liveConfirmPending && (
+            <div style={{ marginTop: 10, padding: "12px 14px", background: "rgba(255,77,109,0.08)", border: `1px solid rgba(255,77,109,0.35)`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.red, marginBottom: 6 }}>⚠ Switch to LIVE trading?</div>
+              <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 10 }}>Real money will be used. Orders placed cannot be undone. Make sure your API keys are for your live Alpaca account.</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { set("alpacaMode", "live"); setLiveConfirmPending(false); }} style={{
+                  padding: "6px 14px", background: COLORS.red, color: "#fff", border: "none",
+                  borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                }}>Confirm Live</button>
+                <button onClick={() => setLiveConfirmPending(false)} style={{
+                  padding: "6px 14px", background: "transparent", color: COLORS.muted,
+                  border: `1px solid ${COLORS.border}`, borderRadius: 6, fontSize: 12, cursor: "pointer",
+                }}>Cancel</button>
+              </div>
+            </div>
+          )}
         </div>
 
 
@@ -245,6 +281,67 @@ export function SettingsPanel({ settings, onChange, onClose }) {
           </div>
           <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 4 }}>
             Fixed $ never shrinks as BP drops. Clear it to use % instead.
+          </div>
+        </div>
+
+        {/* Trading Capital % */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>Trading Capital</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.accent }}>{settings.tradingCapitalPct ?? 100}% of usable BP</div>
+          </div>
+          <input type="range" min={10} max={100} step={10}
+            value={settings.tradingCapitalPct ?? 100}
+            onChange={e => set("tradingCapitalPct", parseInt(e.target.value))}
+            style={{ width: "100%", accentColor: COLORS.accent }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
+            <span>10% (cautious)</span><span>50%</span><span>100% (all in)</span>
+          </div>
+          <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 4 }}>
+            Start at 20–30% when going live for the first time.
+          </div>
+        </div>
+
+        {/* Daily Loss Limit */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>Daily Loss Limit</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.red }}>
+              {(settings.dailyLossLimitPct ?? 3) === 0 ? "Off" : `−${settings.dailyLossLimitPct ?? 3}%`}
+            </div>
+          </div>
+          <input type="range" min={0} max={10} step={0.5}
+            value={settings.dailyLossLimitPct ?? 3}
+            onChange={e => set("dailyLossLimitPct", parseFloat(e.target.value))}
+            style={{ width: "100%", accentColor: COLORS.red }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
+            <span>0% (off)</span><span>3% (default)</span><span>5%</span><span>10%</span>
+          </div>
+          <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 4 }}>
+            Halts all new BUY orders if account loses this % intraday. Resets next trading day.
+          </div>
+        </div>
+
+        {/* Max Open Positions */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: COLORS.muted }}>Max Open Positions</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.gold }}>
+              {(settings.maxOpenPositions ?? 20) === 0 ? "Unlimited" : settings.maxOpenPositions ?? 20}
+            </div>
+          </div>
+          <input type="range" min={0} max={50} step={1}
+            value={settings.maxOpenPositions ?? 20}
+            onChange={e => set("maxOpenPositions", parseInt(e.target.value))}
+            style={{ width: "100%", accentColor: COLORS.gold }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: COLORS.muted, marginTop: 2 }}>
+            <span>0 (unlimited)</span><span>10</span><span>25</span><span>50</span>
+          </div>
+          <div style={{ fontSize: 10, color: COLORS.muted, marginTop: 4 }}>
+            Hard cap on concurrent holdings. 8–12 recommended for live trading.
           </div>
         </div>
 

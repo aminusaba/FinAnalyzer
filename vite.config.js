@@ -30,6 +30,8 @@ function toDaemonConfig(s) {
     maxSectorExposurePct:    s.maxSectorExposurePct   ?? 25,
     weeklyTrendGateEnabled:  s.weeklyTrendGateEnabled ?? false,
     premarketScanEnabled: s.premarketScanEnabled ?? true,
+    dailyLossLimitPct:    s.dailyLossLimitPct    ?? 3,
+    maxOpenPositions:     s.maxOpenPositions      ?? 20,
   };
 }
 
@@ -59,6 +61,8 @@ function fromDaemonConfig(d) {
     maxSectorExposurePct:    d.maxSectorExposurePct   ?? 25,
     weeklyTrendGateEnabled:  d.weeklyTrendGateEnabled ?? false,
     premarketScanEnabled: d.premarketScanEnabled ?? true,
+    dailyLossLimitPct:    d.dailyLossLimitPct    ?? 3,
+    maxOpenPositions:     d.maxOpenPositions      ?? 20,
   };
 }
 
